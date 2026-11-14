@@ -131,7 +131,7 @@ New from Template > Diagram opens a visual designer: add blocks from the palette
 
 ## More than Markdown
 
-Inkdown also opens JSON, YAML and TOML (tree view, validation, formatting and conversion), CSV tables, AsciiDoc, Mermaid and Graphviz files with a live preview, and source code in any language. Use **Export** for Word, RTF, HTML, PDF and Google Docs, and the theme button for nine colour themes.
+Inkdown also opens JSON, YAML and TOML (tree view, validation, formatting and conversion), CSV tables, Avro data files, AsciiDoc, Mermaid and Graphviz files with a live preview, and source code in any language. Use **Export** for Word, RTF, HTML, PDF and Google Docs, and the theme button for nine colour themes.
 
 ## Callouts
 

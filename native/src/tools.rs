@@ -326,6 +326,26 @@ pub fn command(app: &mut InkApp, ctx: &egui::Context, name: &str) {
                 Err(e) => app.toast(e),
             }
         }
+        "tool_avro_to_json" | "tool_avro_schema" => {
+            // an opened .avro file is a read-only JSON view: { "avro": …, "schema": …, "records": […] }
+            let Some(d) = app.docs.get(app.active) else { return };
+            let is_avro = d.read_only && d.path.as_ref().is_some_and(|p| std::fs::File::open(p).ok().is_some_and(|mut f| {
+                let mut magic = [0u8; 4];
+                std::io::Read::read_exact(&mut f, &mut magic).is_ok() && crate::avro::is_container(&magic)
+            }));
+            let root = if is_avro { data::parse("json", &d.buf.text()).ok() } else { None };
+            let Some(root) = root else {
+                app.toast("Open an Avro data file (.avro) first");
+                return;
+            };
+            let (key, ext) = if name == "tool_avro_schema" { ("schema", "avsc") } else { ("records", "json") };
+            let stem = d.name.rsplit_once('.').map(|(s, _)| s.to_string()).unwrap_or_else(|| d.name.clone());
+            match root.get(key).map(|v| data::emit("json", v, false)) {
+                Some(Ok(text)) => app.new_file(Some(format!("{stem}.{ext}")), &text),
+                Some(Err(e)) => app.toast(e),
+                None => app.toast("This Avro view has no such section"),
+            }
+        }
         "tool_csv_to_table" => {
             let Some(d) = app.docs.get(app.active) else { return };
             let Kind::Table(delim) = d.kind else {

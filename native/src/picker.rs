@@ -196,6 +196,8 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
     ("tool_to_yaml", "Tools: Convert to YAML", icons::FILE_JSON),
     ("tool_to_toml", "Tools: Convert to TOML", icons::FILE_JSON),
     ("tool_csv_to_table", "Tools: CSV to Markdown Table", icons::TABLE),
+    ("tool_avro_to_json", "Tools: Avro Records to a JSON Document", icons::FILE_JSON),
+    ("tool_avro_schema", "Tools: Avro Schema to a Document (.avsc)", icons::FILE_JSON),
     ("tool_base64_encode", "Tools: Base64 Encode Selection", icons::LOCK),
     ("tool_base64_decode", "Tools: Base64 Decode Selection", icons::LOCK),
     ("tool_url_encode", "Tools: URL Encode Selection", icons::LINK),

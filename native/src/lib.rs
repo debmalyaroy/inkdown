@@ -4,6 +4,7 @@
 
 pub mod adoc;
 pub mod app;
+pub mod avro;
 pub mod assets;
 pub mod automation;
 pub mod buffer;

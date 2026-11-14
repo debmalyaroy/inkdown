@@ -73,7 +73,7 @@ pub fn find(name: &str, first_line: &str) -> &'static SyntaxReference {
     let ext = file.rsplit('.').next().unwrap_or("");
     let alias = match ext {
         "mdx" | "markdown" | "mdown" | "mkd" => Some("md"),
-        "jsonc" | "json5" | "geojson" | "ipynb" | "webmanifest" => Some("json"),
+        "jsonc" | "json5" | "geojson" | "ipynb" | "webmanifest" | "avsc" | "avro" => Some("json"),
         "mjs" | "cjs" => Some("js"),
         "mts" | "cts" => Some("ts"),
         "zsh" | "fish" | "ksh" | "bashrc" | "zshrc" | "profile" | "env" => Some("sh"),

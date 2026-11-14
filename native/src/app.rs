@@ -418,12 +418,37 @@ impl InkApp {
     }
 
     // ---------------------------------------------------------- commands
+}
+
+/// Caret movement, selection and searching: safe on a read-only document.
+fn is_navigation(name: &str) -> bool {
+    ["move_", "select", "find", "page"].iter().any(|p| name.starts_with(p))
+        || matches!(name, "single_selection" | "expand_selection_to_line" | "show_at_center" | "toggle_bookmark" | "next_bookmark" | "prev_bookmark" | "clear_bookmarks" | "fold" | "unfold" | "fold_all" | "unfold_all" | "scroll_lines_up" | "scroll_lines_down" | "slurp_find_string" | "copy")
+}
+
+/// Commands that do not change the text of the active document.
+fn usable_when_read_only(name: &str) -> bool {
+    const PREFIXES: &[&str] = &["mode", "close", "theme", "open", "new_", "save", "export_", "print", "layout_", "focus_group_", "move_to_group_", "goto_", "show_", "select_tab_", "tool_avro_", "tool_word_count", "reopen_", "set_syntax"];
+    const NAMES: &[&str] = &[
+        "cycle_mode", "next_tab", "prev_tab", "next_view", "prev_view", "welcome", "about", "quit", "integrations", "copy_path", "reveal_in_explorer", "revert",
+        "increase_font_size", "decrease_font_size", "reset_font_size", "toggle_sidebar", "toggle_minimap", "toggle_line_numbers", "toggle_word_wrap", "toggle_status_bar",
+        "toggle_fullscreen", "toggle_auto_save", "toggle_bottom_panel", "build", "build_with", "cancel_build",
+    ];
+    is_navigation(name) || PREFIXES.iter().any(|p| name.starts_with(p)) || NAMES.contains(&name)
+}
+
+impl InkApp {
 
     fn editor_command(&mut self, name: &str, now: f64) -> bool {
         let snippets = self.snippets_for(self.active);
         let Some(d) = self.docs.get_mut(self.active) else { return false };
-        if d.read_only && !name.starts_with("move_") && !name.starts_with("select") && !name.starts_with("find") && !name.starts_with("page") && !matches!(name, "single_selection" | "expand_selection_to_line" | "show_at_center" | "toggle_bookmark" | "next_bookmark" | "prev_bookmark" | "fold" | "unfold" | "unfold_all" | "scroll_lines_up" | "scroll_lines_down" | "slurp_find_string") {
+        if d.read_only && !usable_when_read_only(name) {
+            // an editing command: swallow it, the document cannot change
             return true;
+        }
+        if d.read_only && !is_navigation(name) {
+            // an application command (close, mode, theme, export, ...): not for the editor
+            return false;
         }
         match d.ed.command(name, &mut d.buf, &d.cfg, &snippets, now) {
             Some(changed) => {

@@ -128,6 +128,9 @@ shot $s/17-json.png
 open $p/data/sales.csv
 wait 25
 shot $s/18-csv.png
+open $p/data/readings.avro
+wait 30
+shot $s/18b-avro.png
 open $p/docs/plan.md
 wait 30
 cmd mode split

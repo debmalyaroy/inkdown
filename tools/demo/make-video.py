@@ -47,6 +47,7 @@ SCENES = [
     ("16-goto.png", "Goto Anything", "Ctrl+P jumps to any file, :line, @symbol or #word"),
     ("17-json.png", "JSON, YAML and TOML", "A collapsible tree, validation, formatting and conversion between formats"),
     ("18-csv.png", "CSV as a table", "Tabular data next to its source; convert to a Markdown table in one step"),
+    ("18b-avro.png", "Avro data files", "Binary .avro files open as a tree: schema, codec and every record, read-only"),
     ("19-markdown-split.png", "Notes next to code", "Project documents render with their diagrams while you edit"),
     ("20-two-panes.png", "Two panes", "Keep a document and a source file side by side"),
     ("21-find-in-files.png", "Find in Files", "Search and replace across the folder, with regular expressions"),

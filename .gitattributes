@@ -7,3 +7,4 @@
 *.ttf binary
 *.woff2 binary
 assets/vendor/** linguist-vendored
+*.avro binary

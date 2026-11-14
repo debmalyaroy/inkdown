@@ -12,7 +12,7 @@ First public release. See [docs/releases/v1.0.0.md](docs/releases/v1.0.0.md).
 - Sublime-style code editor: multiple cursors, minimap, folding, snippets, build systems,
   Goto Anything, Find in Files, two panes.
 - Native Mermaid, Graphviz, chart and LaTeX rendering; a visual diagram designer.
-- JSON / YAML / TOML tree views, CSV tables.
+- JSON / YAML / TOML tree views, CSV tables, Avro data files (`.avro`) and schemas.
 - Export to HTML, Word, RTF and PDF.
 - Windows installer and portable exe; Android APK; macOS and Linux preview builds.
 

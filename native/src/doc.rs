@@ -60,7 +60,8 @@ impl Kind {
         let ext = Path::new(&lower).extension().map(|e| e.to_string_lossy().to_string()).unwrap_or_default();
         match ext.as_str() {
             "md" | "markdown" | "mdown" | "mkd" | "mkdn" | "mdwn" | "mdx" => Kind::Markdown,
-            "json" | "geojson" | "jsonc" | "webmanifest" => Kind::Data("json"),
+            // .avsc is an Avro schema (JSON); .avro data files are decoded to JSON when opened
+            "json" | "geojson" | "jsonc" | "webmanifest" | "avsc" | "avro" => Kind::Data("json"),
             "yaml" | "yml" => Kind::Data("yaml"),
             "toml" => Kind::Data("toml"),
             "csv" => Kind::Table(','),
@@ -199,6 +200,9 @@ pub const ENCODINGS: &[(&str, &str)] = &[
     ("Korean (EUC-KR)", "euc-kr"),
 ];
 
+/// Records decoded from an Avro data file; the rest are counted but not shown.
+pub const AVRO_RECORD_LIMIT: usize = 20_000;
+
 impl Doc {
     pub fn new(path: Option<PathBuf>, name: String, text: &str, set: &Settings) -> Self {
         let first = text.lines().next().unwrap_or("");
@@ -287,7 +291,13 @@ impl Doc {
         let bytes = std::fs::read(path).map_err(|e| format!("Cannot open {}: {e}", path.display()))?;
         let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
         let is_image = Kind::of(&name, "") == Kind::Image;
-        let decoded = if is_image { Ok((String::new(), encoding_rs::UTF_8, false)) } else { decode(&bytes) };
+        // an Avro data file is binary: show its schema and records as JSON, read-only
+        let avro = if crate::avro::is_container(&bytes) { Some(crate::avro::read(&bytes, AVRO_RECORD_LIMIT)?) } else { None };
+        let decoded = match &avro {
+            Some(f) => Ok((f.to_json_text(), encoding_rs::UTF_8, false)),
+            None if is_image => Ok((String::new(), encoding_rs::UTF_8, false)),
+            None => decode(&bytes),
+        };
         let (text, enc, bom, binary) = match decoded {
             Ok((t, e, b)) => (t, e, b, false),
             Err(_) => (hex_dump(&bytes), encoding_rs::UTF_8, false, true),
@@ -302,6 +312,16 @@ impl Doc {
         if is_image {
             d.bytes = Some(bytes.into());
             d.read_only = true;
+        }
+        if avro.is_some() {
+            d.read_only = true;
+            d.crlf = false;
+            if !matches!(d.kind, Kind::Data("json")) {
+                // an Avro file under another extension
+                d.kind = Kind::Data("json");
+                d.mode = d.default_mode(set);
+                d.hl = Highlighter::new(syntax::find("x.json", ""));
+            }
         }
         if binary {
             d.read_only = true;

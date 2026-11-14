@@ -11,7 +11,7 @@ in well under a second and uses a fraction of the memory of an Electron editor.
 ![Inkdown demo](docs/media/inkdown-demo.gif)
 
 The animation above is also available as a video: [inkdown-demo.mp4](docs/media/inkdown-demo.mp4)
-(1 min 29 s, 1280 x 858).
+(about a minute and a half, 1280 x 858).
 
 ## Download
 
@@ -53,6 +53,7 @@ Checksums for every file are in `SHA256SUMS.txt` on the release page.
 | ![Code editor](docs/media/shots/14-project.png) **Code.** Sublime-style editor: file tree, minimap, folding, snippets, build systems. | ![Multiple cursors](docs/media/shots/15-multicursor.png) **Multiple cursors.** `Ctrl+D`, add cursors above and below, split into lines. |
 | ![Command palette](docs/media/shots/08-palette.png) **Command palette.** Every command, with its shortcut. | ![Goto Anything](docs/media/shots/16-goto.png) **Goto Anything.** Files, `:line`, `@symbol`, `#word`. |
 | ![JSON tree](docs/media/shots/17-json.png) **Data.** JSON, YAML and TOML as a tree, with validation and conversion. | ![CSV table](docs/media/shots/18-csv.png) **CSV.** Shown as a table next to the source. |
+| ![Avro file](docs/media/shots/18b-avro.png) **Avro.** Binary `.avro` data files decoded to a tree: schema, codec and records. | ![Markdown next to code](docs/media/shots/19-markdown-split.png) **Project notes.** Documents render with their diagrams while you edit. |
 | ![Find in Files](docs/media/shots/21-find-in-files.png) **Find in Files.** Search and replace across a folder. | ![Diagram designer](docs/media/shots/22-designer.png) **Designer.** Draw diagrams; saved as SVG that reopens for editing. |
 | ![Two panes](docs/media/shots/20-two-panes.png) **Two panes.** A document and a source file together. | ![Themes](docs/media/shots/12-theme-nord.png) **Nine themes.** Light, Dark, Sepia, Solarized, Mint, Nord, Dracula and more. |
 
@@ -73,6 +74,10 @@ Checksums for every file are in `SHA256SUMS.txt` on the release page.
   Anything / Symbol / Definition, build systems, two-pane layout, session restore, AutoSave.
 - **Data**: JSON / YAML / TOML tree view with validation, format, minify and conversion;
   CSV / TSV tables; AsciiDoc and HTML preview.
+- **Avro**: `.avro` data files open read-only as a tree of schema and records (codecs
+  `null`, `deflate`, `snappy`; logical types such as dates, timestamps and decimals are
+  shown readably); `.avsc` schemas are edited as JSON. Records or the schema can be copied
+  into a new document.
 - **Export**: HTML, Word (`.docx`), Rich Text, PDF (through an installed Edge or Chrome),
   copy as rich text, upload to Google Docs with your own OAuth client.
 - **Nine themes**, large-file support (a 120,000-line file scrolls at under 8 ms a frame).
@@ -127,9 +132,9 @@ platform nobody has used it on. That is why macOS and Linux are labelled *previe
 
 ## Tests
 
-- `make test`: 37 unit tests (text buffer, editing commands, Markdown layout, exports, data
+- `make test`: 40 unit tests (text buffer, editing commands, Markdown layout, exports, data
   conversion). Run by CI on Windows, macOS and Linux.
-- `pwsh build.ps1 uitest`: 52 end-to-end checks that drive the real window through a
+- `pwsh build.ps1 uitest`: 59 end-to-end checks that drive the real window through a
   scripted input driver in an isolated profile: every mode, multi-cursor editing, the
   designer, session restore, exports and performance budgets. Windows only, run locally
   (GitHub's runners have no GPU for the window).

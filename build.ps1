@@ -15,10 +15,12 @@ $dist = Join-Path $root 'dist'
 $exe = Join-Path $native 'target\release\inkdown.exe'
 $version = (Select-String -Path (Join-Path $native 'Cargo.toml') -Pattern '^version\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
 
-function Cargo([string[]]$CargoArgs) {
+# Named so that it cannot shadow the cargo executable itself.
+function Invoke-Cargo([string[]]$CargoArgs) {
+    $cargo = (Get-Command cargo -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
     Push-Location $native
     try {
-        & cargo @CargoArgs
+        & $cargo @CargoArgs
         if ($LASTEXITCODE -ne 0) { throw "cargo $($CargoArgs -join ' ') failed ($LASTEXITCODE)" }
     } finally { Pop-Location }
 }
@@ -38,18 +40,18 @@ switch ($Task) {
         Write-Host "  clean     remove build output"
     }
     'version' { Write-Output $version }
-    'build' { Cargo @('build', '--locked') }
-    'release' { Cargo @('build', '--release', '--locked') }
-    'run' { Cargo @('run', '--locked') }
-    'test' { Cargo @('test', '--locked') }
-    'check' { Cargo @('check', '--locked') }
+    'build' { Invoke-Cargo @('build', '--locked') }
+    'release' { Invoke-Cargo @('build', '--release', '--locked') }
+    'run' { Invoke-Cargo @('run', '--locked') }
+    'test' { Invoke-Cargo @('test', '--locked') }
+    'check' { Invoke-Cargo @('check', '--locked') }
     'uitest' {
-        Cargo @('build', '--release', '--locked')
+        Invoke-Cargo @('build', '--release', '--locked')
         & pwsh (Join-Path $native 'tools\uitest.ps1') -Release
         if ($LASTEXITCODE -ne 0) { throw 'UI tests failed' }
     }
     { $_ -in 'package', 'windows' } {
-        Cargo @('build', '--release', '--locked')
+        Invoke-Cargo @('build', '--release', '--locked')
         New-Item -ItemType Directory -Force $dist | Out-Null
         # The installer is the application itself: an exe whose name contains "setup" installs.
         Copy-Item $exe (Join-Path $dist 'inkdown.exe') -Force
@@ -57,7 +59,7 @@ switch ($Task) {
         Get-ChildItem $dist -Filter '*.exe' | ForEach-Object { '{0}  {1:N1} MB' -f $_.Name, ($_.Length / 1MB) }
     }
     'msix' {
-        Cargo @('build', '--release', '--locked')
+        Invoke-Cargo @('build', '--release', '--locked')
         & pwsh (Join-Path $root 'packaging\windows\make-msix.ps1') -Exe $exe -Version $version
         if ($LASTEXITCODE -ne 0) { throw 'MSIX packaging failed' }
     }
@@ -71,7 +73,7 @@ switch ($Task) {
         } finally { Pop-Location }
     }
     'clean' {
-        Cargo @('clean')
+        Invoke-Cargo @('clean')
         Remove-Item -Recurse -Force $dist -ErrorAction SilentlyContinue
     }
 }

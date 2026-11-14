@@ -25,6 +25,7 @@ Set-Content "$Out\work\doc.md" "# Trip plan`n`nPack **light** and bring a *map*.
 Set-Content "$Out\work\data.json" '{"name":"ink","items":[1,2,{"deep":true}],"n":null}' -NoNewline
 Set-Content "$Out\work\bad.json" "{`n  `"a`": 1,`n  oops`n}" -NoNewline
 Set-Content "$Out\work\t.csv" "name,qty`napple,3`npear,5`n" -NoNewline
+Copy-Item (Join-Path $root "..\tools\demo\weather-station\data\readings.avro") "$Out\work\readings.avro"
 Set-Content "$Out\work\d.svg" "" -NoNewline
 Set-Content "$Out\work\hello.bat" "@echo hello from build`r`n" -NoNewline
 Set-Content "$Out\work\save.txt" "start`n" -NoNewline
@@ -223,6 +224,26 @@ dump $o/data4.json
 cmd tool_csv_to_table
 wait 5
 dump $o/data5.json
+open $w/readings.avro
+wait 20
+dump $o/data6.json
+type x
+dump $o/data7.json
+cmd tool_avro_to_json
+wait 8
+dump $o/data8.json
+open $w/readings.avro
+cmd tool_avro_schema
+wait 8
+dump $o/data9.json
+open $w/readings.avro
+cmd mode code
+wait 5
+cmd upper_case
+dump $o/data10.json
+cmd close
+wait 5
+dump $o/data11.json
 quit
 "@
     if (Run "data" $s) {
@@ -233,6 +254,18 @@ quit
         Check "invalid JSON reports the line" ($d.tree_error -and $d.tree_error -like "*3*") "$($d.tree_error)"
         Check "CSV opens as a table" ((Doc (J "data4")).kind -eq "CSV")
         Check "CSV converts to a Markdown table" ((Doc (J "data5")).text.StartsWith("| name  | qty |"))
+        $d = Doc (J "data6")
+        $a = if ($d.text) { $d.text | ConvertFrom-Json } else { $null }
+        Check "Avro data file opens as a JSON tree" ($d.kind -eq "JSON" -and $d.mode -eq "split" -and $d.tree_rows -ge 3 -and -not $d.tree_error) "kind=$($d.kind) rows=$($d.tree_rows) err=$($d.tree_error)"
+        Check "Avro records, codec and schema are decoded" ($a.avro.records -eq 12 -and $a.avro.codec -eq "deflate" -and $a.records.Count -eq 12 -and $a.records[2].sensor -eq "roof" -and $a.records[2].kind -eq "WIND" -and $a.records[2].cost -eq "13.00" -and $a.schema.name -like "*Reading") "$($a.avro | ConvertTo-Json -Compress)"
+        Check "Avro view is read-only" ((Doc (J "data6")).read_only -and (Doc (J "data7")).text -eq $d.text -and -not (Doc (J "data7")).dirty)
+        $d = Doc (J "data8")
+        Check "Avro records copy to an editable JSON document" ($d.name -eq "readings.json" -and -not $d.read_only -and $d.text.TrimStart().StartsWith("[") -and ($d.text | ConvertFrom-Json).Count -eq 12) "$($d.name)"
+        $d = Doc (J "data10")
+        Check "read-only document: view commands work, editing commands do not" ($d.name -eq "readings.avro" -and $d.mode -eq "code" -and $d.text -ceq (Doc (J "data6")).text)
+        Check "read-only document can be closed from a command" (((J "data11").docs | Where-Object { $_.name -eq "readings.avro" }).Count -eq 0)
+        $d = Doc (J "data9")
+        Check "Avro schema copies to an .avsc document" ($d.name -eq "readings.avsc" -and $d.kind -eq "JSON" -and ($d.text | ConvertFrom-Json).fields.Count -eq 10) "$($d.name) $($d.kind)"
     }
 }
 
