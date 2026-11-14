@@ -425,9 +425,11 @@ pub fn data_tree(ui: &mut Ui, view: &mut TreeView, id: Id, format: &'static str,
     let full = ui.available_rect_before_wrap();
     ui.painter().rect_filled(full, CornerRadius::ZERO, pal.doc_bg);
     egui::Frame::new().inner_margin(egui::Margin::symmetric(14, 8)).show(ui, |ui| {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 6.0;
-            ui.add(egui::TextEdit::singleline(&mut view.filter).hint_text(format!("{}  Filter keys and values", icons::FILTER)).desired_width(220.0));
+        // wraps onto a second row when the pane is narrow, instead of overlapping
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
+            let filter_w = (ui.available_width() * 0.45).clamp(110.0, 220.0);
+            ui.add(egui::TextEdit::singleline(&mut view.filter).hint_text(format!("{}  Filter keys and values", icons::FILTER)).desired_width(filter_w));
             match &view.error {
                 Some((msg, line)) => {
                     let t = match line {
@@ -440,8 +442,8 @@ pub fn data_tree(ui: &mut Ui, view: &mut TreeView, id: Id, format: &'static str,
                     ui.label(egui::RichText::new(format!("{}  Valid {}", icons::CIRCLE_CHECK, format.to_uppercase())).color(pal.tip).size(12.5));
                 }
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                for target in ["toml", "yaml", "json"] {
+            {
+                for target in ["json", "yaml", "toml"] {
                     if target != format && view.value.is_some() && ui.small_button(format!("Copy as {}", target.to_uppercase())).clicked() {
                         match data::emit(target, view.value.as_ref().unwrap(), false) {
                             Ok(t) => {
@@ -462,7 +464,7 @@ pub fn data_tree(ui: &mut Ui, view: &mut TreeView, id: Id, format: &'static str,
                         cx.actions.push(Action::Replace(t));
                     }
                 }
-            });
+            }
         });
     });
     let row_h = (cx.font_size * 1.55).round();

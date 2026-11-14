@@ -216,7 +216,7 @@ impl Doc {
             mode: Mode::Code,
             encoding: encoding_rs::UTF_8,
             bom: false,
-            crlf: cfg!(windows) && false,
+            crlf: false, // new documents use LF on every platform
             wrap: None,
             edited_at: None,
             mtime: None,

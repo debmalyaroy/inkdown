@@ -201,6 +201,10 @@ pub fn html_page(markdown: &str, stem: &str, base: Option<&Path>, png: bool) -> 
 /// A Chromium-family browser that can print to PDF without showing a window.
 pub fn pdf_browser() -> Option<PathBuf> {
     let mut candidates: Vec<PathBuf> = Vec::new();
+    // INKDOWN_BROWSER names the browser to use when it is installed somewhere unusual
+    if let Some(p) = std::env::var_os("INKDOWN_BROWSER") {
+        candidates.push(PathBuf::from(p));
+    }
     #[cfg(windows)]
     for var in ["ProgramFiles(x86)", "ProgramFiles", "LOCALAPPDATA"] {
         if let Some(root) = std::env::var_os(var) {
@@ -210,8 +214,17 @@ pub fn pdf_browser() -> Option<PathBuf> {
         }
     }
     #[cfg(target_os = "macos")]
-    for p in ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge", "/Applications/Chromium.app/Contents/MacOS/Chromium"] {
-        candidates.push(PathBuf::from(p));
+    {
+        // system-wide and per-user application folders
+        let mut roots = vec![PathBuf::from("/Applications")];
+        if let Some(home) = std::env::var_os("HOME") {
+            roots.push(PathBuf::from(home).join("Applications"));
+        }
+        for root in roots {
+            for app in ["Google Chrome.app/Contents/MacOS/Google Chrome", "Microsoft Edge.app/Contents/MacOS/Microsoft Edge", "Chromium.app/Contents/MacOS/Chromium"] {
+                candidates.push(root.join(app));
+            }
+        }
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     for name in ["chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "microsoft-edge"] {

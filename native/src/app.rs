@@ -1332,6 +1332,22 @@ impl eframe::App for InkApp {
         if narrow && self.set.show_sidebar {
             crate::sidebar::drawer(&ctx, self);
         }
+        // The default window is 1280 x 840 points. On a smaller screen (a 1366 x 768 laptop at
+        // 125 % is only 1093 x 614 points) shrink it so that it fits on the screen.
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        if self.frame_count < 3 {
+            let (monitor, inner, outer) = ctx.input(|i| (i.viewport().monitor_size, i.viewport().inner_rect, i.viewport().outer_rect));
+            if let (Some(m), Some(inner), Some(outer)) = (monitor, inner, outer) {
+                // leave room for the title bar, window borders and the taskbar
+                let chrome = outer.size() - inner.size();
+                let max = vec2((m.x - chrome.x - 16.0).max(360.0), (m.y - chrome.y - 64.0).max(300.0));
+                if m.x > 0.0 && (inner.width() > max.x + 0.5 || inner.height() > max.y + 0.5) {
+                    let size = vec2(inner.width().min(max.x), inner.height().min(max.y));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(8.0, 8.0)));
+                }
+            }
+        }
         // An editor can lose focus for a single frame during a click. Without this the phone
         // keyboard gets "hide" and "show" back to back and stays hidden.
         match ctx.output(|o| o.ime.clone()) {

@@ -46,5 +46,6 @@ treat the macOS build as a preview. Known gaps:
 
 - Opening a file by double-clicking it in Finder starts Inkdown but does not load the
   file yet (drag the file onto the window, or use File > Open).
-- Shortcuts use `Ctrl` as on Windows; `Cmd` variants are not mapped.
+- The key map is the Windows one with `Cmd` in place of `Ctrl`; Mac-specific shortcuts
+  (such as `Cmd+Q` handling or `Option` word movement) have not been reviewed.
 - No Mac App Store package.

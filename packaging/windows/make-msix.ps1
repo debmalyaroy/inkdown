@@ -15,10 +15,12 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
-if (-not $Exe) { $Exe = Join-Path $root 'target\release\inkdown.exe' }
-if (-not $Version) { $Version = ((Select-String -Path (Join-Path $root 'Cargo.toml') -Pattern '^version\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value) }
+if (-not $Exe) { $Exe = Join-Path $root 'native\target\release\inkdown.exe' }
+if (-not $Version) { $Version = ((Select-String -Path (Join-Path $root 'native\Cargo.toml') -Pattern '^version\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value) }
 $version4 = "$Version.0"
-$makeappx = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter makeappx.exe | Where-Object { $_.FullName -match '\\x64\\' } | Sort-Object FullName | Select-Object -Last 1
+$kits = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots' -ErrorAction SilentlyContinue).KitsRoot10
+if (-not $kits) { $kits = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10' }
+$makeappx = Get-ChildItem (Join-Path $kits 'bin') -Recurse -Filter makeappx.exe | Where-Object { $_.FullName -match '\\x64\\' } | Sort-Object FullName | Select-Object -Last 1
 if (-not $makeappx) { throw 'makeappx.exe not found. Install the Windows SDK.' }
 
 $layout = Join-Path $root 'target\msix'

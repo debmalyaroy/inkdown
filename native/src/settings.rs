@@ -20,7 +20,7 @@ pub fn config_dir() -> PathBuf {
     }
     #[cfg(target_os = "android")]
     {
-        PathBuf::from(std::env::var_os("INKDOWN_ANDROID_DIR").unwrap_or_else(|| "/data/data/app.inkdown.editor/files".into()))
+        std::env::var_os("INKDOWN_ANDROID_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir)
     }
     #[cfg(target_os = "ios")]
     {

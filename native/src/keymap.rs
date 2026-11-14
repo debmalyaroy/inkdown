@@ -415,7 +415,7 @@ mod tests {
         assert!(matches!(km.feed(Combo::parse("ctrl+d").unwrap(), true), Match::Command(c, _) if c == "find_under_expand"));
         assert!(matches!(km.feed(Combo::parse("ctrl+k").unwrap(), true), Match::Pending));
         assert!(matches!(km.feed(Combo::parse("ctrl+u").unwrap(), true), Match::Command(c, _) if c == "upper_case"));
-        assert_eq!(km.label("save"), "Ctrl+S");
+        assert_eq!(km.label("save"), if cfg!(target_os = "macos") { "⌘S" } else { "Ctrl+S" });
         let user = Keymap::parse_user(r#"[{ "keys": ["ctrl+d"], "command": "duplicate_line" }]"#, &km.bindings);
         km.bindings.extend(user);
         assert!(matches!(km.feed(Combo::parse("ctrl+d").unwrap(), true), Match::Command(c, _) if c == "duplicate_line"));

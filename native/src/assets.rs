@@ -230,6 +230,11 @@ pub fn mermaid_svg(src: &str, dark: bool) -> Result<String, String> {
         let mut opt = mermaid_rs_renderer::RenderOptions::default();
         if dark {
             opt.theme = mermaid_rs_renderer::Theme::dark();
+            // the stock dark pie colours are nearly black on a dark page
+            let pie = ["#6d6af2", "#22a06b", "#e2883a", "#d9548c", "#3b9fd9", "#b9a13a", "#8f6ad9", "#3fb3a3", "#d96a5a", "#7d8aa8", "#5fae4e", "#c06fd0"];
+            opt.theme.pie_colors = pie.map(String::from);
+            opt.theme.pie_stroke_color = "#1b1d24".into();
+            opt.theme.pie_outer_stroke_color = "#3a3d4a".into();
         }
         mermaid_rs_renderer::render_with_options(&src, opt).map_err(|e| e.to_string())
     })

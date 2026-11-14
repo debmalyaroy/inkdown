@@ -274,7 +274,7 @@ pub fn toolbar(ui: &mut Ui, app: &mut InkApp) {
         ];
         for (gi, group) in groups.iter().enumerate() {
             // show only the groups that fit
-            let needed: f32 = groups[..=gi].iter().map(|g| g.len() as f32 * 29.0 + 12.0).sum();
+            let needed: f32 = groups[..=gi].iter().map(|g| g.len() as f32 * 31.0 + 16.0).sum();
             if needed > avail && gi > 0 {
                 break;
             }

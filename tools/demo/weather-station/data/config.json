@@ -1,0 +1,11 @@
+{
+  "name": "weather-station",
+  "version": "1.4.0",
+  "sensors": [
+    { "id": "north", "kind": "temperature", "interval": 30, "enabled": true },
+    { "id": "south", "kind": "temperature", "interval": 30, "enabled": true },
+    { "id": "roof", "kind": "wind", "interval": 5, "enabled": false }
+  ],
+  "upload": { "url": "https://example.org/api", "retries": 3, "timeout": 12.5 },
+  "notes": null
+}

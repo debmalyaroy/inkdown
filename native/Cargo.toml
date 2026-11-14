@@ -1,6 +1,6 @@
 [package]
 name = "inkdown-native"
-version = "3.0.0"
+version = "1.0.0"
 edition = "2021"
 description = "Inkdown: a universal editor with a pure-Rust UI and renderer (no web view)"
 
