@@ -1,0 +1,178 @@
+name: Release
+
+# Push a tag such as v3.0.0 to build every package and publish a GitHub release.
+# The release text comes from docs/releases/<tag>.md.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build and publish (for example v3.0.0)
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  windows:
+    name: Windows installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+      - name: Check that the tag matches the app version
+        shell: pwsh
+        run: |
+          $v = pwsh build.ps1 version
+          if ("v$v" -ne $env:TAG) { throw "Tag $env:TAG does not match native/Cargo.toml version $v" }
+      - name: Unit tests
+        working-directory: native
+        run: cargo test --locked
+      - name: Build installer and portable exe
+        shell: pwsh
+        run: |
+          pwsh build.ps1 package
+          Copy-Item dist\inkdown.exe dist\inkdown-windows-x64.exe
+      - name: Installer smoke test
+        shell: pwsh
+        run: |
+          $p = Start-Process dist\Inkdown-Setup.exe -ArgumentList '--quiet' -PassThru
+          if (-not $p.WaitForExit(120000)) { $p.Kill(); throw 'installer timed out' }
+          if ($p.ExitCode -ne 0) { throw "installer exit code $($p.ExitCode)" }
+          $exe = "$env:LOCALAPPDATA\Programs\Inkdown\inkdown.exe"
+          if (-not (Test-Path $exe)) { throw 'installed exe not found' }
+          if (-not (Test-Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Inkdown')) { throw 'uninstall entry missing' }
+          $p = Start-Process $exe -ArgumentList '--uninstall', '--quiet' -PassThru
+          if (-not $p.WaitForExit(120000)) { $p.Kill(); throw 'uninstaller timed out' }
+          Start-Sleep 5
+          if (Test-Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Inkdown') { throw 'uninstall entry still present' }
+          Write-Host 'install and uninstall OK'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            dist/Inkdown-Setup.exe
+            dist/inkdown-windows-x64.exe
+          if-no-files-found: error
+
+  android:
+    name: Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: docker/setup-buildx-action@v3
+      - name: Build APK
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packaging/android/Dockerfile
+          tags: inkdown-android
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Copy APK out of the image
+        run: |
+          mkdir -p dist/android
+          docker run --rm -v "$PWD/dist/android:/out" inkdown-android
+          cp dist/android/inkdown.apk dist/android/inkdown-android.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: dist/android/inkdown-android.apk
+          if-no-files-found: error
+
+  macos:
+    name: macOS app (preview)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+      - name: Build Inkdown.app and the disk image
+        run: sh packaging/macos/build.sh
+      - name: Check the app bundle
+        run: |
+          plutil -lint dist/macos/Inkdown.app/Contents/Info.plist
+          codesign --verify --deep --strict dist/macos/Inkdown.app
+          hdiutil verify dist/macos/Inkdown-*.dmg
+          cp dist/macos/Inkdown-*.dmg dist/macos/Inkdown-macos-universal.dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/macos/Inkdown-macos-universal.dmg
+          if-no-files-found: error
+
+  linux:
+    name: Linux build (preview)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libxkbcommon-dev libwayland-dev libxcb1-dev libgl1-mesa-dev libfontconfig1-dev
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+      - name: Build and pack
+        run: make linux
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/linux/inkdown-linux-x86_64.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: [windows, android, macos, linux]
+    # Windows and Android are required; the preview platforms may be missing.
+    if: ${{ !cancelled() && needs.windows.result == 'success' && needs.android.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - name: Checksums
+        working-directory: out
+        run: |
+          ls -la
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes="docs/releases/$TAG.md"
+          [ -f "$notes" ] || { echo "Release $TAG" > /tmp/notes.md; notes=/tmp/notes.md; }
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" out/* --clobber
+            gh release edit "$TAG" --notes-file "$notes" --title "Inkdown ${TAG#v}"
+          else
+            gh release create "$TAG" out/* --title "Inkdown ${TAG#v}" --notes-file "$notes" --verify-tag
+          fi

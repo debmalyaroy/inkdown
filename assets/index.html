@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src * data: blob:; media-src * data: blob:; font-src 'self' data:; connect-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Inkdown</title>
+<link rel="icon" href="icon.png">
+<link rel="stylesheet" href="vendor/cm/codemirror.css">
+<link rel="stylesheet" href="vendor/katex/katex.min.css">
+<link rel="stylesheet" href="vendor/hljs/light.css" id="hljs-light">
+<link rel="stylesheet" href="vendor/hljs/dark.css" id="hljs-dark" disabled>
+<link rel="stylesheet" href="doc.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <button class="icon-btn" id="btn-sidebar" data-cmd="toggleSidebar" data-tip="Sidebar (Ctrl+\)"></button>
+    <button class="autosave" id="btn-autosave" data-tip="Save changes automatically as you work"><span>AutoSave</span><i class="switch"></i><b>Off</b></button>
+    <button class="icon-btn" data-cmd="save" data-tip="Save (Ctrl+S)" data-icon="save"></button>
+    <div class="tabs" id="tabs"></div>
+    <button class="icon-btn" id="btn-new" data-cmd="newDoc" data-tip="New document (Ctrl+N)"></button>
+    <div class="topbar-spacer"></div>
+    <div class="segmented" id="mode-switch" role="tablist">
+      <button data-mode="read" data-tip="Reader view (Alt+1)"><span class="ico" data-icon="read"></span><span>Read</span></button>
+      <button data-mode="write" data-tip="Word-style editor (Alt+2)"><span class="ico" data-icon="edit"></span><span>Write</span></button>
+      <button data-mode="split" data-tip="Markdown source + live preview (Alt+3)"><span class="ico" data-icon="split"></span><span>Markdown</span></button>
+    </div>
+    <button class="btn sm ghost" id="btn-export" data-tip="Export or share this document"><span class="ico" data-icon="download"></span><span>Export</span></button>
+    <button class="icon-btn" data-cmd="find" data-tip="Find (Ctrl+F)" data-icon="search"></button>
+    <button class="icon-btn" id="btn-theme" data-tip="Themes"></button>
+    <button class="icon-btn" id="btn-settings" data-tip="Appearance" data-icon="sliders"></button>
+    <button class="icon-btn" id="btn-menu" data-tip="Menu" data-icon="menu"></button>
+  </header>
+
+  <div class="toolbar" id="toolbar"></div>
+  <div class="toolbar" id="toolbar2"></div>
+
+  <div class="banner" id="banner" hidden></div>
+
+  <main class="workspace">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-tabs">
+        <button data-panel="outline" class="active">Outline</button>
+        <button data-panel="files">Files</button>
+      </div>
+      <div class="sidebar-panel" id="panel-outline">
+        <div class="outline" id="outline"></div>
+      </div>
+      <div class="sidebar-panel" id="panel-files" hidden>
+        <div class="files-head" id="files-head"></div>
+        <div class="files" id="files"></div>
+      </div>
+    </aside>
+    <div class="splitter" id="split-sidebar" data-for="sidebar"></div>
+
+    <section class="pane rich-pane" id="rich-pane"><div class="page" id="rich"></div></section>
+    <section class="pane editor-pane" id="editor-pane"><div id="editor"></div></section>
+    <div class="splitter" id="split-main" data-for="editor"></div>
+    <section class="pane preview-pane" id="preview-pane" tabindex="-1">
+      <article class="markdown-body" id="preview"></article>
+    </section>
+
+    <section class="start" id="start" hidden></section>
+
+    <div class="findbar" id="findbar" hidden>
+      <div class="find-row">
+        <input id="find-input" type="text" placeholder="Find" spellcheck="false" autocomplete="off">
+        <span class="find-count" id="find-count"></span>
+        <button class="chip" id="find-case" data-tip="Match case">Aa</button>
+        <button class="chip" id="find-word" data-tip="Whole word"><u>ab</u></button>
+        <button class="chip" id="find-regex" data-tip="Regular expression">.*</button>
+        <button class="icon-btn sm" id="find-prev" data-tip="Previous (Shift+Enter)" data-icon="up"></button>
+        <button class="icon-btn sm" id="find-next" data-tip="Next (Enter)" data-icon="down"></button>
+        <button class="icon-btn sm" id="find-close" data-tip="Close (Esc)" data-icon="x"></button>
+      </div>
+      <div class="find-row" id="replace-row" hidden>
+        <input id="replace-input" type="text" placeholder="Replace with" spellcheck="false" autocomplete="off">
+        <button class="btn sm" id="replace-one">Replace</button>
+        <button class="btn sm" id="replace-all">Replace all</button>
+      </div>
+    </div>
+  </main>
+
+  <footer class="statusbar">
+    <button class="status-item" id="st-path" data-tip="Show in File Explorer"></button>
+    <span class="status-item" id="st-state"></span>
+    <span class="status-spacer"></span>
+    <span class="status-item" id="st-pos"></span>
+    <button class="status-item" id="st-words" data-tip="Document statistics"></button>
+    <span class="status-item" id="st-read"></span>
+    <span class="status-item" id="st-kind"></span><span class="status-item" id="st-eol"></span>
+    <button class="status-item" id="st-zoom" data-cmd="zoomReset" data-tip="Reset zoom (Ctrl+0)"></button>
+  </footer>
+</div>
+
+<div id="overlays"></div>
+<div id="toasts"></div>
+
+<script src="vendor/purify.min.js"></script>
+<script src="vendor/cm/codemirror.bundle.js"></script>
+<script src="vendor/cm/loadmode.js"></script>
+<script src="vendor/hljs/highlight.min.js"></script>
+<script src="js/core.js"></script>
+<script src="js/preview.js"></script>
+<script src="js/editor.js"></script>
+<script src="js/kinds.js"></script>
+<script src="js/rich.js"></script>
+<script src="js/export.js"></script>
+<script src="js/designer.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

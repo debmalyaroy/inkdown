@@ -1,0 +1,20 @@
+# build output
+target/
+native/target/
+dist/
+
+# third-party sources fetched for the old web build
+vendor-src/node_modules/
+
+# signing material never belongs in the repository
+*.keystore
+*.jks
+*.pfx
+*.p12
+*.mobileprovision
+
+# local
+.DS_Store
+Thumbs.db
+*.log
+.claude/
