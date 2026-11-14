@@ -2,6 +2,18 @@
 
 Each release has full notes in `docs/releases/`.
 
+## [1.0.1] - 2026-11-14
+
+See [docs/releases/v1.0.1.md](docs/releases/v1.0.1.md).
+
+- Update check once a day and on demand; in-place update on Windows with a verified
+  download.
+- Help menu.
+- Fixed: commands were ignored while a read-only document was active; the two Avro copy
+  commands now work.
+- Licensed under GPL-3.0-or-later; contributing guide, code of conduct, security policy and
+  issue templates.
+
 ## [1.0.0] - 2026-11-14
 
 First public release. See [docs/releases/v1.0.0.md](docs/releases/v1.0.0.md).
@@ -16,4 +28,5 @@ First public release. See [docs/releases/v1.0.0.md](docs/releases/v1.0.0.md).
 - Export to HTML, Word, RTF and PDF.
 - Windows installer and portable exe; Android APK; macOS and Linux preview builds.
 
+[1.0.1]: https://github.com/debmalyaroy/inkdown/releases/tag/v1.0.1
 [1.0.0]: https://github.com/debmalyaroy/inkdown/releases/tag/v1.0.0

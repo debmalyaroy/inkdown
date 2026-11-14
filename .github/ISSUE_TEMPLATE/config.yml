@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security problem
+    url: https://github.com/debmalyaroy/inkdown/security/advisories/new
+    about: Report a vulnerability privately instead of opening a public issue.
+  - name: Download and release notes
+    url: https://github.com/debmalyaroy/inkdown/releases/latest
+    about: Get the latest version and see what changed.

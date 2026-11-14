@@ -30,6 +30,8 @@ pub enum Dialog {
     ConfirmClose(usize),
     Shortcuts,
     About,
+    /// Update check result, download progress and restart prompt.
+    Update,
     Integrations,
     Message(String, String),
     ConfirmDelete(PathBuf),
@@ -93,6 +95,7 @@ pub struct InkApp {
     ime_keep: Option<(egui::output::IMEOutput, u8)>,
     pub first_frame_ms: Option<f32>,
     pub quit: bool,
+    pub updater: crate::update::Updater,
     /// Glyph atlas state last frame; cached layouts must be rebuilt when egui resets the atlas.
     atlas: (f32, Option<egui::epaint::text::TextOptions>, f32),
 }
@@ -153,6 +156,7 @@ impl InkApp {
             last_cmd: String::new(),
             started,
             ime_keep: None,
+            updater: Default::default(),
             first_frame_ms: None,
             quit: false,
             atlas: (0.0, None, 0.0),
@@ -430,6 +434,7 @@ fn is_navigation(name: &str) -> bool {
 fn usable_when_read_only(name: &str) -> bool {
     const PREFIXES: &[&str] = &["mode", "close", "theme", "open", "new_", "save", "export_", "print", "layout_", "focus_group_", "move_to_group_", "goto_", "show_", "select_tab_", "tool_avro_", "tool_word_count", "reopen_", "set_syntax"];
     const NAMES: &[&str] = &[
+        "check_for_updates", "update_download", "update_install", "help_docs", "help_release_notes", "help_report_issue", "command_palette", "show_shortcuts", "select_theme",
         "cycle_mode", "next_tab", "prev_tab", "next_view", "prev_view", "welcome", "about", "quit", "integrations", "copy_path", "reveal_in_explorer", "revert",
         "increase_font_size", "decrease_font_size", "reset_font_size", "toggle_sidebar", "toggle_minimap", "toggle_line_numbers", "toggle_word_wrap", "toggle_status_bar",
         "toggle_fullscreen", "toggle_auto_save", "toggle_bottom_panel", "build", "build_with", "cancel_build",
@@ -703,6 +708,26 @@ impl InkApp {
             "open_snippets" => self.open_config(crate::settings::snippets_path(), crate::snippets::SNIPPETS_TEMPLATE),
             "show_shortcuts" => self.dialog = Some(Dialog::Shortcuts),
             "about" => self.dialog = Some(Dialog::About),
+            "check_for_updates" => {
+                if cfg!(any(target_os = "android", target_os = "ios")) {
+                    crate::shell_open(&crate::update::releases_url());
+                } else {
+                    if self.updater.available().is_none() {
+                        self.updater.check(ctx, true);
+                    }
+                    self.dialog = Some(Dialog::Update);
+                }
+            }
+            // the two steps behind the buttons of the update dialog
+            "update_download" => self.updater.download(ctx),
+            "update_install" => {
+                if self.updater.install_and_restart() {
+                    self.pending.push("quit".into());
+                }
+            }
+            "help_docs" => crate::shell_open(&crate::update::docs_url()),
+            "help_release_notes" => crate::shell_open(&crate::update::releases_url()),
+            "help_report_issue" => crate::shell_open(&crate::update::issues_url()),
             "integrations" => self.dialog = Some(Dialog::Integrations),
             "cut" => ctx.send_viewport_cmd(egui::ViewportCommand::RequestCut),
             "copy" => ctx.send_viewport_cmd(egui::ViewportCommand::RequestCopy),
@@ -810,6 +835,15 @@ impl InkApp {
 
     fn tick(&mut self, ctx: &egui::Context) {
         let now = ctx.input(|i| i.time);
+        // updates: one quiet check a day, a few seconds after start-up
+        if now > 3.0 {
+            self.updater.auto_check(ctx, self.set.check_for_updates);
+        } else {
+            ctx.request_repaint_after(std::time::Duration::from_secs(3));
+        }
+        if self.updater.poll() && self.dialog.is_none() {
+            self.dialog = Some(Dialog::Update);
+        }
         // follow the OS theme
         let sys = ctx.system_theme().map(|t| t == egui::Theme::Dark).unwrap_or(self.system_dark);
         if sys != self.system_dark {

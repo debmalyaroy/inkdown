@@ -5,6 +5,7 @@
 pub mod adoc;
 pub mod app;
 pub mod avro;
+pub mod update;
 pub mod assets;
 pub mod automation;
 pub mod buffer;
@@ -72,8 +73,18 @@ pub fn run_cli(args: &[String]) -> Option<i32> {
     let setup = std::env::current_exe().ok().and_then(|p| p.file_stem().map(|s| s.to_string_lossy().to_lowercase())).is_some_and(|s| s.contains("setup"));
     let removing = args.iter().any(|a| a == "--uninstall");
     let installing = args.iter().any(|a| a == "--install") || (setup && !removing);
+    // --relaunch is used by the updater: the running copy needs a moment to close before
+    // its file can be replaced, and it should come back afterwards.
+    let relaunch = args.iter().any(|a| a == "--relaunch");
     let action = if installing {
-        install::install()
+        let mut result = install::install();
+        let mut tries = 0;
+        while relaunch && result.is_err() && tries < 80 {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            result = install::install();
+            tries += 1;
+        }
+        result
     } else if removing {
         install::uninstall()
     } else {
@@ -100,7 +111,7 @@ pub fn run_cli(args: &[String]) -> Option<i32> {
         let _ = std::fs::write(std::env::temp_dir().join("inkdown-install.log"), action.unwrap_or_else(|e| format!("ERROR: {e}")));
     }
     // a silent install must not open a window
-    if setup && installing && code == 0 && !quiet {
+    if installing && code == 0 && ((setup && !quiet) || relaunch) {
         let _ = std::process::Command::new(install::install_dir().join(install::EXE_NAME)).spawn();
     }
     Some(code)

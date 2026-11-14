@@ -3,6 +3,7 @@ name = "inkdown"
 version = "0.9.0"
 edition = "2021"
 description = "Inkdown - Markdown viewer and editor"
+license = "GPL-3.0-or-later"
 build = "build.rs"
 
 [dependencies]

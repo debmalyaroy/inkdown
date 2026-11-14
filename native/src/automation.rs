@@ -204,6 +204,9 @@ pub fn dump(app: &InkApp, ctx: &egui::Context) -> serde_json::Value {
     serde_json::json!({
         "active": app.active,
         "docs": docs,
+        "update": app.updater.label(),
+        "update_version": app.updater.available().map(|r| r.version.clone()),
+        "dialog": app.dialog.is_some(),
         "theme": app.pal.id,
         "auto_save": app.set.auto_save,
         "line_numbers": app.set.line_numbers,

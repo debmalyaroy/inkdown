@@ -68,8 +68,17 @@ fn main_menu(ui: &mut Ui, app: &mut InkApp) {
     menu_item(ui, app, icons::PLUG, "Integrations…", "integrations");
     ui.separator();
     menu_item(ui, app, icons::SEARCH, "Command Palette…", "command_palette");
-    menu_item(ui, app, icons::KEYBOARD, "Keyboard Shortcuts", "show_shortcuts");
+    ui.menu_button(format!("{}   Help", icons::INFO), |ui| help_menu(ui, app));
+}
+
+fn help_menu(ui: &mut Ui, app: &mut InkApp) {
     menu_item(ui, app, icons::BOOK_OPEN, "Welcome Tour", "welcome");
+    menu_item(ui, app, icons::KEYBOARD, "Keyboard Shortcuts", "show_shortcuts");
+    menu_item(ui, app, icons::BOOK_OPEN, "Documentation", "help_docs");
+    menu_item(ui, app, icons::HISTORY, "Release Notes", "help_release_notes");
+    menu_item(ui, app, icons::INFO, "Report an Issue", "help_report_issue");
+    ui.separator();
+    menu_item(ui, app, icons::REFRESH_CW, "Check for Updates…", "check_for_updates");
     menu_item(ui, app, icons::INFO, "About Inkdown", "about");
 }
 
@@ -649,10 +658,131 @@ pub fn dialogs(ctx: &egui::Context, app: &mut InkApp) {
                         ui.label(egui::RichText::new(format!("Using {mb:.0} MB of memory · last frame {:.1} ms", app.frame_ms)).size(11.5).color(pal.faint));
                     }
                     ui.add_space(14.0);
-                    ok = primary(ui, &pal, "Close").clicked();
+                    ui.horizontal(|ui| {
+                        // centre the two buttons
+                        ui.add_space(((ui.available_width() - 250.0) / 2.0).max(0.0));
+                        if ui.add(egui::Button::new("Check for Updates").min_size(vec2(150.0, 30.0)).corner_radius(7)).clicked() {
+                            app.pending.push("check_for_updates".into());
+                            ok = true;
+                        }
+                        ok |= primary(ui, &pal, "Close").clicked();
+                    });
                 });
             });
             if ok || esc {
+                keep = false;
+            }
+        }
+        Dialog::Update => {
+            use crate::update::State;
+            let state = app.updater.state.clone();
+            let mut close = false;
+            let mut action = "";
+            let esc = dialog_frame(ctx, &pal, "dlg-update", 440.0, |ui| {
+                ui.label(egui::RichText::new("Software Update").size(17.0).strong());
+                ui.add_space(8.0);
+                let current = crate::update::current_version();
+                let line = |ui: &mut Ui, text: String| {
+                    ui.label(egui::RichText::new(text).color(pal.muted));
+                };
+                match &state {
+                    State::Idle | State::Checking => {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            line(ui, "Checking for updates…".into());
+                        });
+                    }
+                    State::UpToDate => line(ui, format!("{}  Inkdown {current} is the latest version.", icons::CIRCLE_CHECK)),
+                    State::Available(r) => {
+                        ui.label(egui::RichText::new(format!("Inkdown {} is available.", r.version)).strong());
+                        line(ui, format!("You have version {current}."));
+                        if !crate::update::can_self_update() {
+                            ui.add_space(4.0);
+                            line(ui, "This copy was not installed with the Inkdown installer, so it cannot update itself. Download the new version from the release page.".into());
+                        } else if r.installer.is_none() {
+                            ui.add_space(4.0);
+                            line(ui, "This release has no Windows installer yet. See the release page.".into());
+                        }
+                    }
+                    State::Downloading(r) => {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            line(ui, format!("Downloading Inkdown {}…", r.version));
+                        });
+                    }
+                    State::Ready(r, _) => {
+                        ui.label(egui::RichText::new(format!("Inkdown {} is ready to install.", r.version)).strong());
+                        line(ui, "The download was verified. Inkdown will close, update and open again with the same documents.".into());
+                    }
+                    State::Failed(msg) => {
+                        ui.label(egui::RichText::new(format!("{}  {msg}", icons::CIRCLE_ALERT)).color(pal.danger));
+                    }
+                }
+                ui.add_space(16.0);
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+                    let plain = |ui: &mut Ui, label: &str| ui.add(egui::Button::new(label).min_size(vec2(84.0, 30.0)).corner_radius(7)).clicked();
+                    match &state {
+                        State::Available(r) => {
+                            if crate::update::can_self_update() && r.installer.is_some() {
+                                if primary(ui, &pal, "Download and Install").clicked() {
+                                    action = "download";
+                                }
+                            } else if primary(ui, &pal, "Open Download Page").clicked() {
+                                action = "page";
+                            }
+                            if plain(ui, "Release Notes") {
+                                action = "notes";
+                            }
+                            close |= plain(ui, "Later");
+                        }
+                        State::Ready(..) => {
+                            if primary(ui, &pal, "Restart and Update").clicked() {
+                                action = "install";
+                            }
+                            close |= plain(ui, "Later");
+                        }
+                        State::Failed(_) => {
+                            if primary(ui, &pal, "Try Again").clicked() {
+                                action = "retry";
+                            }
+                            if plain(ui, "Open Download Page") {
+                                action = "page";
+                            }
+                            close |= plain(ui, "Close");
+                        }
+                        State::UpToDate => {
+                            if plain(ui, "Release Notes") {
+                                action = "page";
+                            }
+                            close |= primary(ui, &pal, "Close").clicked();
+                        }
+                        _ => close |= plain(ui, "Hide"),
+                    }
+                });
+            });
+            match action {
+                "download" => app.updater.download(ctx),
+                "retry" => app.updater.check(ctx, true),
+                "page" => crate::shell_open(&crate::update::releases_url()),
+                "notes" => {
+                    if let Some(r) = app.updater.available() {
+                        crate::shell_open(&r.page);
+                    }
+                }
+                "install" => {
+                    // unsaved work is kept: the session is written before the window closes
+                    if app.updater.install_and_restart() {
+                        app.pending.push("quit".into());
+                        close = true;
+                    }
+                }
+                _ => {}
+            }
+            if app.updater.busy() {
+                ctx.request_repaint_after(std::time::Duration::from_millis(150));
+            }
+            if close || esc {
                 keep = false;
             }
         }

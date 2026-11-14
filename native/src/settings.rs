@@ -60,6 +60,8 @@ pub struct Settings {
     pub trim_trailing_white_space_on_save: bool,
     pub ensure_newline_at_eof_on_save: bool,
     pub hot_exit: bool,
+    /// Look for a newer release once a day (a plain request to GitHub; nothing is sent).
+    pub check_for_updates: bool,
     pub show_sidebar: bool,
     pub show_status_bar: bool,
     /// Reading layout: "sans" or "serif", and the column width in points.
@@ -108,6 +110,7 @@ impl Default for Settings {
             trim_trailing_white_space_on_save: false,
             ensure_newline_at_eof_on_save: false,
             hot_exit: true,
+            check_for_updates: true,
             show_sidebar: false,
             show_status_bar: true,
             document_font: "sans".into(),

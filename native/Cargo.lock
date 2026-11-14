@@ -1638,7 +1638,7 @@ dependencies = [
 
 [[package]]
 name = "inkdown-native"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "arboard",
  "base64 0.22.1",

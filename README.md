@@ -15,7 +15,7 @@ The animation above is also available as a video: [inkdown-demo.mp4](docs/media/
 
 ## Download
 
-**Current release: [v1.0.0](https://github.com/debmalyaroy/inkdown/releases/latest)** ([release notes](docs/releases/v1.0.0.md), [all releases](https://github.com/debmalyaroy/inkdown/releases))
+**Current release: [v1.0.1](https://github.com/debmalyaroy/inkdown/releases/latest)** ([release notes](docs/releases/v1.0.1.md), [all releases](https://github.com/debmalyaroy/inkdown/releases))
 
 | Platform | Download | Status |
 | --- | --- | --- |
@@ -80,6 +80,10 @@ Checksums for every file are in `SHA256SUMS.txt` on the release page.
   into a new document.
 - **Export**: HTML, Word (`.docx`), Rich Text, PDF (through an installed Edge or Chrome),
   copy as rich text, upload to Google Docs with your own OAuth client.
+- **Updates**: Inkdown looks for a new release once a day and offers it; on Windows the
+  installed copy downloads the installer, verifies its checksum and restarts into the new
+  version. *Help > Check for Updates* does it on demand. Turn the daily check off with
+  `"check_for_updates": false` in *Preferences > Settings*.
 - **Nine themes**, large-file support (a 120,000-line file scrolls at under 8 ms a frame).
 
 ### Measured on Windows 11 (release build)
@@ -132,9 +136,9 @@ platform nobody has used it on. That is why macOS and Linux are labelled *previe
 
 ## Tests
 
-- `make test`: 40 unit tests (text buffer, editing commands, Markdown layout, exports, data
+- `make test`: 43 unit tests (text buffer, editing commands, Markdown layout, exports, data
   conversion). Run by CI on Windows, macOS and Linux.
-- `pwsh build.ps1 uitest`: 59 end-to-end checks that drive the real window through a
+- `pwsh build.ps1 uitest`: 65 end-to-end checks that drive the real window through a
   scripted input driver in an isolated profile: every mode, multi-cursor editing, the
   designer, session restore, exports and performance budgets. Windows only, run locally
   (GitHub's runners have no GPU for the window).
@@ -171,6 +175,15 @@ platform nobody has used it on. That is why macOS and Linux are labelled *previe
 
 ## Licence
 
-Copyright (c) 2026 the Inkdown author. All rights reserved; no open-source licence has been
-chosen yet. You may read the source and build it for your own use. Bundled fonts and
-libraries keep their own licences: see [NOTICE.md](NOTICE.md).
+Inkdown is free software under the [GNU General Public License, version 3 or later](LICENSE).
+You may use, study, change and share it. If you distribute Inkdown or a version you have
+changed, you must make the source available under the same licence; it cannot be folded
+into a closed-source product. For other licensing terms, contact the author.
+
+Bundled fonts and libraries keep their own licences: see [NOTICE.md](NOTICE.md).
+
+## Contributing
+
+Bug reports, fixes and testing on macOS, Linux and real Android phones are especially
+welcome. See [CONTRIBUTING.md](CONTRIBUTING.md), the [Code of Conduct](CODE_OF_CONDUCT.md)
+and, for vulnerabilities, [SECURITY.md](SECURITY.md).

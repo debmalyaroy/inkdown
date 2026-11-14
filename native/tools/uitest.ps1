@@ -414,6 +414,86 @@ quit
     }
 }
 
+# ----------------------------------------------------------------- update
+# A tiny local web server stands in for GitHub Releases (127.0.0.1 only, random port).
+if (Want "update") {
+    Write-Host "update"
+    $site = "$Out\site"
+    New-Item -ItemType Directory -Force $site | Out-Null
+    $probe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+    $probe.Start(); $port = $probe.LocalEndpoint.Port; $probe.Stop()
+    $base = "http://127.0.0.1:$port"
+    $server = Start-Job -ArgumentList $site, $port -ScriptBlock {
+        param($dir, $port)
+        $l = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $port)
+        $l.Start()
+        while ($true) {
+            $c = $l.AcceptTcpClient()
+            try {
+                $s = $c.GetStream()
+                $r = [System.IO.StreamReader]::new($s)
+                $line = $r.ReadLine()
+                while (($h = $r.ReadLine())) { }
+                $name = ($line -split ' ')[1].TrimStart('/')
+                $file = Join-Path $dir $name
+                if ($name -and (Test-Path $file -PathType Leaf)) {
+                    $body = [System.IO.File]::ReadAllBytes($file)
+                    $head = [System.Text.Encoding]::ASCII.GetBytes("HTTP/1.1 200 OK`r`nContent-Length: $($body.Length)`r`nConnection: close`r`n`r`n")
+                    $s.Write($head, 0, $head.Length); $s.Write($body, 0, $body.Length)
+                } else {
+                    $head = [System.Text.Encoding]::ASCII.GetBytes("HTTP/1.1 404 Not Found`r`nContent-Length: 0`r`nConnection: close`r`n`r`n")
+                    $s.Write($head, 0, $head.Length)
+                }
+                $s.Flush()
+            } catch { } finally { $c.Close() }
+        }
+    }
+    Start-Sleep -Milliseconds 800
+    function Publish([string]$version, [string]$sum) {
+        [System.IO.File]::WriteAllBytes("$site\Inkdown-Setup.exe", [System.Text.Encoding]::ASCII.GetBytes("not a real installer $version"))
+        if (-not $sum) { $sum = (Get-FileHash "$site\Inkdown-Setup.exe" -Algorithm SHA256).Hash.ToLower() }
+        Set-Content "$site\SHA256SUMS.txt" "$sum  Inkdown-Setup.exe`n" -NoNewline
+        $rel = @{ tag_name = "v$version"; html_url = "$base/notes"; assets = @(
+                @{ name = "Inkdown-Setup.exe"; browser_download_url = "$base/Inkdown-Setup.exe" },
+                @{ name = "SHA256SUMS.txt"; browser_download_url = "$base/SHA256SUMS.txt" }) }
+        Set-Content "$site\latest.json" ($rel | ConvertTo-Json -Depth 5)
+    }
+    $got = Join-Path ([System.IO.Path]::GetTempPath()) "inkdown-update\Inkdown-Setup.exe"
+    try {
+        $env:INKDOWN_UPDATE_URL = "$base/latest.json"
+        $steps = "wait 10`ncmd check_for_updates`nsleep 2500`nwait 3`ndump $o/NAME1.json`ncmd update_download`nsleep 2500`nwait 3`ndump $o/NAME2.json`nquit"
+
+        Remove-Item $got -ErrorAction SilentlyContinue
+        Publish "99.0.0" ""
+        if (Run "up" $steps.Replace("NAME", "up")) {
+            $j = J "up1"
+            Check "a newer release is found and offered" ($j.update -eq "available" -and $j.update_version -eq "99.0.0" -and $j.dialog) "$($j.update) $($j.update_version)"
+            Check "the installer is downloaded and its checksum verified" ((J "up2").update -eq "ready" -and (Test-Path $got) -and (Get-FileHash $got).Hash -eq (Get-FileHash "$site\Inkdown-Setup.exe").Hash) "$((J 'up2').update)"
+        }
+        Remove-Item $got -ErrorAction SilentlyContinue
+        Publish "99.0.0" ("0" * 64)
+        if (Run "upbad" $steps.Replace("NAME", "upbad")) {
+            Check "a download with the wrong checksum is rejected and not saved" ((J "upbad2").update -eq "failed" -and -not (Test-Path $got)) "$((J 'upbad2').update)"
+        }
+        Publish "0.0.1" ""
+        if (Run "upold" $steps.Replace("NAME", "upold")) {
+            Check "an older release is not offered" ((J "upold1").update -eq "up-to-date") "$((J 'upold1').update)"
+        }
+        $env:INKDOWN_UPDATE_URL = "$base/missing.json"
+        if (Run "upnone" $steps.Replace("NAME", "upnone")) {
+            Check "a failed check is reported, not hidden" ((J "upnone1").update -eq "failed" -and (J "upnone1").dialog) "$((J 'upnone1').update)"
+        }
+        Remove-Item Env:INKDOWN_UPDATE_URL
+        if (Run "upoff" "wait 10`nsleep 4500`nwait 3`ndump $o/upoff1.json`nquit") {
+            Check "test runs never contact the real update server" ((J "upoff1").update -eq "idle") "$((J 'upoff1').update)"
+        }
+    } finally {
+        Remove-Item Env:INKDOWN_UPDATE_URL -ErrorAction SilentlyContinue
+        Remove-Item $got -ErrorAction SilentlyContinue
+        Stop-Job $server -ErrorAction SilentlyContinue; Remove-Job $server -Force -ErrorAction SilentlyContinue
+    }
+}
+
 # ------------------------------------------------------------ performance
 if (Want "perf") {
     Write-Host "perf"

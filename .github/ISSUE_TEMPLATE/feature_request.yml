@@ -1,0 +1,35 @@
+name: Feature request
+description: Suggest something Inkdown should do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The task or problem, rather than the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help?
+      description: How you imagine it working. Mention another editor that does this well, if any.
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Where do you need it?
+      multiple: true
+      options:
+        - Windows
+        - Android
+        - macOS
+        - Linux
+        - iOS
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Contribution
+      options:
+        - label: I would like to work on this myself
