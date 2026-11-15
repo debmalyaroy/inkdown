@@ -819,13 +819,20 @@ if (Want "web") {
             Remove-Item "$o/port.txt", "$o/wb1.json" -ErrorAction SilentlyContinue
             $srvArgs = @((Arg "$fixtures/range_server.py"), (Arg "$o/web"), (Arg "$o/port.txt"))
             if ($mode -eq "plain") { $srvArgs += "--no-range" }
-            $srv = if ($windows) { Start-Process -FilePath $py -ArgumentList $srvArgs -PassThru -WindowStyle Hidden } else { Start-Process -FilePath $py -ArgumentList $srvArgs -PassThru -RedirectStandardError "$o/server-err.txt" -RedirectStandardOutput "$o/server-out.txt" }
+            if ($windows) {
+                $srv = Start-Process -FilePath $py -ArgumentList $srvArgs -PassThru -WindowStyle Hidden
+            } else {
+                # through the shell, detached: the server ends by itself when its port file is removed
+                $srv = $null
+                $extra = if ($mode -eq "plain") { "--no-range" } else { "" }
+                & /bin/sh -c "nohup '$py' '$fixtures/range_server.py' '$o/web' '$o/port.txt' $extra > '$o/server-out.txt' 2> '$o/server-err.txt' < /dev/null &"
+            }
             $t0 = Get-Date
             while (-not (Test-Path "$o/port.txt") -and ((Get-Date) - $t0).TotalSeconds -lt 15) { Start-Sleep -Milliseconds 100 }
             Start-Sleep -Milliseconds 200
             if (-not (Test-Path "$o/port.txt")) {
-                Check "[$mode] the test web server starts" $false "$py $($srvArgs -join ' ') :: $(Get-Content "$o/server-err.txt" -Raw -ErrorAction SilentlyContinue)"
-                if (-not $srv.HasExited) { $srv.Kill() }
+                Check "[$mode] the test web server starts" $false "$py $($srvArgs -join ' ') :: $(Get-Content "$o/server-err.txt" -Raw -ErrorAction SilentlyContinue) :: $(Get-Content "$o/server-out.txt" -Raw -ErrorAction SilentlyContinue)"
+                if ($srv -and -not $srv.HasExited) { $srv.Kill() }
                 continue
             }
             $port = (Get-Content "$o/port.txt" -Raw).Trim()
@@ -838,7 +845,8 @@ if (Want "web") {
             Add-Content -Path "$o/web/app.log" -Value "2026-11-15T10:00:02.000Z ERROR [main] added on the server`n" -NoNewline
             if (-not $p.WaitForExit(60000)) { $p.Kill() }
             Remove-Item "$o/port.txt" -ErrorAction SilentlyContinue
-            if (-not $srv.WaitForExit(5000)) { $srv.Kill() }
+            if ($srv -and -not $srv.WaitForExit(5000)) { $srv.Kill() }
+            if (-not $srv) { Start-Sleep -Milliseconds 800 }
             $a = Doc (J "wb1"); $b = (J "wb2").docs | Where-Object { $_.name -eq "app.log" }
             Check "[$mode] a web address opens as a read-only document, coloured as a log and followed" ($a.name -eq "app.log" -and $a.live.url -eq "$u/app.log" -and $a.read_only -and $a.syntax -eq "log" -and $a.live.follow -and $a.lines -eq 3 -and -not $a.live.error) "$($a.name) lines=$($a.lines) syntax=$($a.syntax) err=$($a.live.error)"
             Check "[$mode] lines added on the server appear by themselves" ($b.text -like "*added on the server*" -and $b.lines -eq 4 -and $b.sels[0][1] -eq $b.chars) "lines=$($b.lines) updates=$($b.live.updates)"
