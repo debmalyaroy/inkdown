@@ -77,6 +77,8 @@ jobs:
   linux-ui:
     name: UI checks (Linux, in a container)
     needs: test
+    # runs whenever the Linux build exists, whatever the other systems did
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

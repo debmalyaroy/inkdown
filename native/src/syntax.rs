@@ -186,6 +186,11 @@ pub struct Highlighter {
     /// background parse reaches them.
     approx: HashMap<usize, Spans>,
     worker: Option<Worker>,
+    /// Parser states at block starts near the lines on screen, found by starting a couple
+    /// of thousand lines above them. Almost always the true states, long before the
+    /// parse from the top of a very large file gets there.
+    near: HashMap<usize, (ParseState, ScopeStack)>,
+    near_job: Option<(std::sync::mpsc::Receiver<Vec<(usize, (ParseState, ScopeStack))>>, u64, usize)>,
     generation: Arc<std::sync::atomic::AtomicU64>,
     spent: Duration,
     /// True while some visible lines are approximate or not highlighted yet.
@@ -203,7 +208,7 @@ impl Highlighter {
     pub fn new(syntax: &'static SyntaxReference) -> Self {
         let plain = syntax.name == "Plain Text";
         let log = syntax.name.eq_ignore_ascii_case("log");
-        Self { syntax, plain, log, checkpoints: Vec::new(), cache: HashMap::new(), approx: HashMap::new(), worker: None, generation: Arc::new(std::sync::atomic::AtomicU64::new(1)), spent: Duration::ZERO, pending: false }
+        Self { syntax, plain, log, checkpoints: Vec::new(), cache: HashMap::new(), approx: HashMap::new(), worker: None, near: HashMap::new(), near_job: None, generation: Arc::new(std::sync::atomic::AtomicU64::new(1)), spent: Duration::ZERO, pending: false }
     }
 
     pub fn name(&self) -> &str {
@@ -214,6 +219,8 @@ impl Highlighter {
         self.checkpoints.truncate(line / STEP + 1);
         self.cache.retain(|l, _| *l < line);
         self.approx.clear();
+        self.near.clear();
+        self.near_job = None;
         // results of a parse of the old text must not be used
         self.generation.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.worker = None;
@@ -223,8 +230,29 @@ impl Highlighter {
     pub fn begin_frame(&mut self) {
         self.spent = Duration::ZERO;
         self.pending = false;
-        let Some(w) = &self.worker else { return };
         let current = self.generation.load(std::sync::atomic::Ordering::Relaxed);
+        if let Some((rx, generation, _)) = &self.near_job {
+            match rx.try_recv() {
+                Ok(states) => {
+                    if *generation == current {
+                        if self.near.len() > 4096 {
+                            self.near.clear();
+                        }
+                        for (block, state) in states {
+                            // lines coloured from a mere guess are done again from this better start
+                            for l in block * STEP..(block + 1) * STEP {
+                                self.approx.remove(&l);
+                            }
+                            self.near.insert(block, state);
+                        }
+                    }
+                    self.near_job = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                Err(_) => self.near_job = None,
+            }
+        }
+        let Some(w) = &self.worker else { return };
         let mut got = false;
         let mut done = false;
         loop {
@@ -255,6 +283,50 @@ impl Highlighter {
         buf.rope.line(i).to_string()
     }
 
+    /// Finds the parser states around `block` without waiting for the parse from the top:
+    /// a parser started some way above settles into the true state within a few lines,
+    /// unless a comment or string longer than that distance is in the way.
+    fn start_near(&mut self, buf: &Buffer, block: usize) {
+        const ABOVE: usize = 64; // blocks: about two thousand lines
+        const AHEAD: usize = 16;
+        if self.near_job.as_ref().is_some_and(|j| j.2.abs_diff(block) <= AHEAD / 2) {
+            return;
+        }
+        // start from the best state known: the true one if it is close, else one found before
+        let first = block.saturating_sub(ABOVE);
+        let known = self.checkpoints.len().saturating_sub(1);
+        let (start, mut st, mut stack) = if known >= first && known <= block {
+            let (st, stack) = self.checkpoints[known].clone();
+            (known, st, stack)
+        } else if let Some(b) = (first..block).rev().find(|b| self.near.contains_key(b)) {
+            let (st, stack) = self.near[&b].clone();
+            (b, st, stack)
+        } else {
+            (first, ParseState::new(self.syntax), ScopeStack::new())
+        };
+        let rope = buf.rope.clone();
+        let shared = self.generation.clone();
+        let mine = shared.load(std::sync::atomic::Ordering::Relaxed);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let spawned = std::thread::Builder::new().name("ink-syntax-near".into()).spawn(move || {
+            let blocks = rope.len_lines().div_ceil(STEP);
+            let mut out = Vec::new();
+            for b in start..(block + AHEAD).min(blocks) {
+                if b + 4 >= block {
+                    out.push((b, (st.clone(), stack.clone())));
+                }
+                if shared.load(std::sync::atomic::Ordering::Relaxed) != mine {
+                    return;
+                }
+                parse_block(&rope, b, &mut st, &mut stack);
+            }
+            let _ = tx.send(out);
+        });
+        if spawned.is_ok() {
+            self.near_job = Some((rx, mine, block));
+        }
+    }
+
     /// Parse the rest of the file on another thread, starting from the last known state.
     fn start_worker(&mut self, buf: &Buffer) {
         if self.worker.is_some() || self.checkpoints.is_empty() {
@@ -271,7 +343,7 @@ impl Highlighter {
             let lines = rope.len_lines();
             let blocks = lines.div_ceil(STEP);
             let cancelled = || shared.load(std::sync::atomic::Ordering::Relaxed) != mine;
-            let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).min(8);
+            let threads = (std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1) / 2).clamp(1, 12);
             let remaining = blocks.saturating_sub(block);
             if remaining < 4000 || threads < 2 {
                 // a file of ordinary size: one pass, results handed over as they come
@@ -400,6 +472,9 @@ impl Highlighter {
         if !exact {
             self.pending = true;
             self.start_worker(buf);
+            if !self.near.contains_key(&block) {
+                self.start_near(buf, block);
+            }
             if let Some(s) = self.approx.get(&line) {
                 return Some(s.clone());
             }
@@ -409,7 +484,7 @@ impl Highlighter {
             return None;
         }
         let started = Instant::now();
-        let (mut st, mut stack) = if exact { self.checkpoints[block].clone() } else { (ParseState::new(self.syntax), ScopeStack::new()) };
+        let (mut st, mut stack) = if exact { self.checkpoints[block].clone() } else { self.near.get(&block).cloned().unwrap_or_else(|| (ParseState::new(self.syntax), ScopeStack::new())) };
         let mut found = None;
         for i in from..(from + STEP).min(buf.lines()) {
             let spans = parse_line(&mut st, &mut stack, &Self::line(buf, i));
@@ -575,7 +650,66 @@ mod bench {
             parse_block(&buf.rope, b, &mut st, &mut stack);
         }
         assert!(h.checkpoints[blocks].0 == st && h.checkpoints[blocks].1 == stack);
+        // a second highlighter asked only for lines far down: what it finds near them, without
+        // the parse from the top, is the true state (the long comments end well above)
+        let mut quick = Highlighter::new(syntax);
+        quick.begin_frame();
+        let far = buf.lines() - 40;
+        let _ = quick.spans(&buf, far, Duration::from_millis(50));
+        let started = Instant::now();
+        while !quick.near.contains_key(&(far / STEP)) && started.elapsed() < Duration::from_secs(120) {
+            std::thread::sleep(Duration::from_millis(5));
+            quick.begin_frame();
+            let _ = quick.spans(&buf, far, Duration::from_millis(50));
+        }
+        let found = quick.near.get(&(far / STEP)).expect("states near the requested lines arrive");
+        assert!(found.0 == h.checkpoints[far / STEP].0 && found.1 == h.checkpoints[far / STEP].1, "the state found from nearby is the true one");
         assert!(inside_comment > 1000, "the test text really has long comments ({inside_comment} blocks start inside one)");
+    }
+
+    #[test]
+    #[ignore = "timing only"]
+    fn large_file_speed() {
+        let unit = "/// Adds two numbers.\npub fn add_N(a: i32, b: i32) -> i32 {\n    let s = \"text N\";\n    /* a block\n       comment */\n    if a > b { a + b } else { b - a + s.len() as i32 }\n}\n\n";
+        let mut text = String::new();
+        let mut i = 0;
+        while text.len() < 60 << 20 {
+            text.push_str(&unit.replace('N', &i.to_string()));
+            i += 1;
+        }
+        let buf = Buffer::new(&text);
+        let syntax = find("big.rs", "");
+        let blocks = buf.lines().div_ceil(STEP);
+        println!("{} lines, {} blocks, {} threads available", buf.lines(), blocks, std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1));
+        // one pass over a twentieth of the file, to know the plain rate
+        let (mut st, mut stack) = (ParseState::new(syntax), ScopeStack::new());
+        let t = Instant::now();
+        for b in 0..blocks / 20 {
+            parse_block(&buf.rope, b, &mut st, &mut stack);
+        }
+        let one = t.elapsed().as_secs_f64();
+        println!("one pass: {:.0} lines a second, so {:.1} s for the whole file", (blocks / 20 * STEP) as f64 / one, one * 20.0);
+        let mut h = Highlighter::new(syntax);
+        h.begin_frame();
+        let line = buf.lines() - 20;
+        let _ = h.spans(&buf, line, Duration::from_millis(50));
+        let t = Instant::now();
+        while !h.near.contains_key(&(line / STEP)) && t.elapsed() < Duration::from_secs(60) {
+            std::thread::sleep(Duration::from_millis(5));
+            h.begin_frame();
+            let _ = h.spans(&buf, line, Duration::from_millis(50));
+        }
+        println!("the lines on screen have their colours after {:.2} s", t.elapsed().as_secs_f64());
+        let mut last = 0;
+        while h.worker.is_some() && t.elapsed() < Duration::from_secs(600) {
+            std::thread::sleep(Duration::from_millis(250));
+            h.begin_frame();
+            if h.checkpoints.len() * 10 / (blocks + 1) != last {
+                last = h.checkpoints.len() * 10 / (blocks + 1);
+                println!("  {:>5.1} s: {} of {} blocks", t.elapsed().as_secs_f64(), h.checkpoints.len(), blocks);
+            }
+        }
+        println!("in parts: {:.1} s", t.elapsed().as_secs_f64());
     }
 
     #[test]

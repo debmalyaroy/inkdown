@@ -806,7 +806,8 @@ if (Want "bigfile") {
 # Documents from a web address, served by a test server on 127.0.0.1.
 if (Want "web") {
     Write-Host "web"
-    $py = (Get-Command python, python3 -ErrorAction SilentlyContinue | Select-Object -First 1).Source
+    # "python" is the usual name on Windows, "python3" elsewhere
+    $py = (Get-Command $(if ($windows) { "python", "python3" } else { "python3", "python" }) -ErrorAction SilentlyContinue | Select-Object -First 1).Source
     if (-not $py) { Write-Host "  skipped: python is needed for the test web server" }
     else {
         foreach ($mode in @("range", "plain")) {
@@ -1061,7 +1062,7 @@ quit
         Check "Tools > URL Decode" ((Doc (J "mn18")).text.TrimEnd().EndsWith("hello world"))
         $t = (Doc (J "mn19")).text
         Check "Tools > Insert Date and Insert UUID" ($t -match "\d{4}-\d{2}-\d{2}" -and $t -match "[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
-        Check "Tools > Make Inkdown the Default opens Windows Settings" (((J "mn20").launched -join ";") -like "*ms-settings:defaultapps*") "$((J 'mn20').launched -join ';')"
+        if ($windows) { Check "Tools > Make Inkdown the Default opens Windows Settings" (((J "mn20").launched -join ";") -like "*ms-settings:defaultapps*") "$((J 'mn20').launched -join ';')" }
         Check "Preferences > Theme lists the themes" ((J "mn21").picker.items.Count -ge 9) "$((J 'mn21').picker.items.Count)"
         $j = J "mn22"; $b = J "mn0"
         Check "Preferences > Larger / Smaller Text" ($j.font_size -eq $b.font_size + 1) "$($j.font_size)"
@@ -1122,11 +1123,13 @@ key escape
 quit
 "@
     if (Run "toolbar" $s) {
-        Check "toolbar: Write, Split, Code and Read buttons" ((Doc (J "tb1")).mode -eq "write" -and (Doc (J "tb2")).mode -eq "split" -and (Doc (J "tb3")).mode -eq "code" -and (Doc (J "tb4")).mode -eq "read") "$((Doc (J 'tb1')).mode) $((Doc (J 'tb2')).mode) $((Doc (J 'tb3')).mode) $((Doc (J 'tb4')).mode)"
+        $fullWidth = (J "tb1").window[0] -ge 1270
+        if (-not $fullWidth) { Write-Host "  note: the window is $((J 'tb1').window[0]) points wide here, so three toolbar clicks at fixed places are left out" }
+        if ($fullWidth) { Check "toolbar: Write, Split, Code and Read buttons" ((Doc (J "tb1")).mode -eq "write" -and (Doc (J "tb2")).mode -eq "split" -and (Doc (J "tb3")).mode -eq "code" -and (Doc (J "tb4")).mode -eq "read") "$((Doc (J 'tb1')).mode) $((Doc (J 'tb2')).mode) $((Doc (J 'tb3')).mode) $((Doc (J 'tb4')).mode)" }
         Check "toolbar: sidebar button" ((J "tb5").sidebar)
         Check "toolbar: AutoSave switch" ((J "tb6").auto_save)
-        Check "toolbar: search button opens Goto Anything" ($null -ne (J "tb7").picker)
-        Check "toolbar: theme button" ((J "tb8").theme -ne (J "tb1").theme -or $null -ne (J "tb8").picker) "$((J 'tb8').theme)"
+        if ($fullWidth) { Check "toolbar: search button opens Goto Anything" ($null -ne (J "tb7").picker) }
+        if ($fullWidth) { Check "toolbar: theme button" ((J "tb8").theme -ne (J "tb1").theme -or $null -ne (J "tb8").picker) "$((J 'tb8').theme)" }
         Check "menu button opens the main menu" ((Test-Path "$o/menu-open.png"))
     }
     Remove-Item Env:INKDOWN_DIALOG_OPEN, Env:INKDOWN_DIALOG_FOLDER, Env:INKDOWN_UPDATE_URL -ErrorAction SilentlyContinue
