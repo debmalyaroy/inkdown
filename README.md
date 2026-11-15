@@ -15,7 +15,7 @@ The animation above is also available as a video: [inkdown-demo.mp4](docs/media/
 
 ## Download
 
-**Current release: [v1.0.1](https://github.com/debmalyaroy/inkdown/releases/latest)** ([release notes](docs/releases/v1.0.1.md), [all releases](https://github.com/debmalyaroy/inkdown/releases))
+**Current release: [v1.0.2](https://github.com/debmalyaroy/inkdown/releases/latest)** ([release notes](docs/releases/v1.0.2.md), [all releases](https://github.com/debmalyaroy/inkdown/releases))
 
 | Platform | Download | Status |
 | --- | --- | --- |
@@ -138,7 +138,7 @@ platform nobody has used it on. That is why macOS and Linux are labelled *previe
 
 - `make test`: 43 unit tests (text buffer, editing commands, Markdown layout, exports, data
   conversion). Run by CI on Windows, macOS and Linux.
-- `pwsh build.ps1 uitest`: 65 end-to-end checks that drive the real window through a
+- `pwsh build.ps1 uitest`: 106 end-to-end checks that drive the real window through a
   scripted input driver in an isolated profile: every mode, multi-cursor editing, the
   designer, session restore, exports and performance budgets. Windows only, run locally
   (GitHub's runners have no GPU for the window).

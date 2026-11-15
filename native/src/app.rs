@@ -103,6 +103,8 @@ pub struct InkApp {
     pub atlas_resets: u32,
     /// Document waiting for the answer of the phone's "save as" picker.
     pending_save: Option<u64>,
+    /// A dialog or picker was open last frame.
+    had_overlay: bool,
     /// When the phone glue was last asked for arrived documents.
     mobile_polled: f64,
     /// Input events to deliver at the start of the next frame (paste on phones).
@@ -170,6 +172,7 @@ impl InkApp {
             updater: Default::default(),
             inject: Vec::new(),
             pending_save: None,
+            had_overlay: false,
             mobile_polled: 0.0,
             total_sum: 0.0,
             atlas_resets: 0,
@@ -833,14 +836,18 @@ impl InkApp {
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             "paste" => ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste),
             "copy_path" => {
-                if let Some(p) = self.doc().and_then(|d| d.path.clone()) {
-                    ctx.copy_text(p.to_string_lossy().to_string());
-                    self.toast("Path copied");
+                match self.doc().and_then(|d| d.path.clone()) {
+                    Some(p) => {
+                        ctx.copy_text(p.to_string_lossy().to_string());
+                        self.toast("Path copied");
+                    }
+                    None => self.toast("Save the document first: it is not a file yet"),
                 }
             }
             "reveal_in_explorer" => {
-                if let Some(p) = self.doc().and_then(|d| d.path.clone()) {
-                    crate::platform::reveal(&p);
+                match self.doc().and_then(|d| d.path.clone()) {
+                    Some(p) => crate::platform::reveal(&p),
+                    None => self.toast("Save the document first: it is not a file yet"),
                 }
             }
             "build" => crate::project::build(self, None),
@@ -1537,6 +1544,27 @@ impl eframe::App for InkApp {
                 crate::mobile::clipboard_set(text);
             }
         }
+        // scripted test runs must not replace what the user has on the clipboard
+        if crate::platform::scripted() {
+            ctx.output_mut(|o| {
+                o.commands.retain(|c| match c {
+                    egui::OutputCommand::CopyText(t) => !crate::platform::note_copy(t),
+                    _ => true,
+                })
+            });
+        }
+        // when a dialog or picker closes, typing goes to the document again without a click
+        let overlay = self.dialog.is_some() || self.picker.is_some();
+        if self.had_overlay && !overlay {
+            if let Some(d) = self.docs.get_mut(self.active) {
+                d.ed.focus = true;
+                if let Some(r) = &mut d.view.rich {
+                    r.focus = true;
+                }
+            }
+            ctx.request_repaint();
+        }
+        self.had_overlay = overlay;
         let had_input = ctx.input(|i| !i.events.is_empty() || i.pointer.any_released() || i.pointer.any_pressed());
         if !self.pending.is_empty() || had_input {
             ctx.request_repaint();

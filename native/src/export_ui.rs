@@ -417,7 +417,22 @@ pub fn command(app: &mut InkApp, ctx: &egui::Context, name: &str) {
         "export_copy_rich" => {
             let (page, _) = html_page(&text, &stem, base.as_deref(), true);
             let plain = md::parse(&text).iter().map(|t| plain_block(&t.block)).collect::<Vec<_>>().join("\n\n");
-            match arboard::Clipboard::new().and_then(|mut c| c.set_html(page, Some(plain))) {
+            if crate::platform::note_copy(&plain) {
+                app.toast("Copied. Paste into Word, Google Docs or an email.");
+                return;
+            }
+            // another program may hold the clipboard for a moment: try a few times
+            let mut result = Err(arboard::Error::ClipboardOccupied);
+            for attempt in 0..5 {
+                if attempt > 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(60));
+                }
+                result = arboard::Clipboard::new().and_then(|mut c| c.set_html(page.clone(), Some(plain.clone())));
+                if !matches!(result, Err(arboard::Error::ClipboardOccupied)) {
+                    break;
+                }
+            }
+            match result {
                 Ok(()) => app.toast("Copied. Paste into Word, Google Docs or an email."),
                 Err(e) => app.toast(format!("Could not copy: {e}")),
             }

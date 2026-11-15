@@ -136,9 +136,20 @@ static LAUNCHED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new(
 
 /// In a scripted run, records what would have been opened and returns true (do not open).
 #[allow(dead_code)]
-fn note_launch(target: &str) -> bool {
+pub fn note_launch(target: &str) -> bool {
     if scripted() {
         LAUNCHED.lock().unwrap().push(target.to_string());
+        return true;
+    }
+    false
+}
+
+/// In a scripted run, records text that would have gone to the clipboard and returns true,
+/// so that tests never replace what the user has copied.
+pub fn note_copy(text: &str) -> bool {
+    if scripted() {
+        let head: String = text.chars().take(60).collect();
+        LAUNCHED.lock().unwrap().push(format!("copy:{head}"));
         return true;
     }
     false

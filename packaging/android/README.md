@@ -26,27 +26,43 @@ The app writes a few diagnostic lines to the device log: `adb logcat -s Inkdown`
 ## Tested
 
 On an Android 15 emulator (x86_64, Pixel 6 profile): launch, the tour page with diagrams
-and emoji, touch scrolling, all four modes, typing with the on-screen keyboard in Code and
-Write mode, "Open with Inkdown" for a Markdown file in Downloads, and Save writing back to
-that file. Memory was about 54 MB. It has not been run on a physical phone or on arm64.
+and emoji, touch scrolling, all four modes, every menu and submenu, typing with the
+on-screen keyboard, the file pickers, opening a file while running, the print dialog,
+exports to Downloads, and Save writing back to the original file. Memory was about 54 MB. It has not been run on a physical phone or on arm64.
+
+## How the package is put together
+
+`cargo apk` builds the native libraries. `packaging/android/package.sh` then assembles the
+APK from them, the manifest (`AndroidManifest.xml`) and a small Java activity
+(`java/app/inkdown/editor/MainActivity.java`). The activity adds what Android only offers
+to Java: the system file pickers, documents that arrive while the app is running, and
+printing. Everything else is the same Rust code as on the desktop.
 
 ## What works on Android
 
-- Reading and editing with all four modes, themes, the command palette and exports that
-  need no desktop program (HTML, Word, RTF written to the app's documents folder).
-- "Open with Inkdown" from a file manager or another app (text, Markdown, JSON, YAML,
-  TOML, SVG). Saving writes back to the original document when the sending app allows it.
+- Reading and editing in all four modes, themes (following the system light or dark
+  setting), the command palette, the Edit menu with the system clipboard.
+- **Open** and **Save As** through the system file pickers; **Open with Inkdown** from a
+  file manager or another app, also while Inkdown is running. Saving writes back to the
+  original document.
+- **Print or Save as PDF** through the system print dialog.
+- Export to HTML, Word and RTF, and diagrams to PNG or SVG, saved to `Downloads/Inkdown`;
+  **Save a Copy to Downloads** for the document itself.
 - The app's own documents folder, shown in the drawer.
 
-## Not done yet
+## Not available on Android
 
-- A system file picker inside the app (needs a small Java activity for
-  `ACTION_OPEN_DOCUMENT`; `NativeActivity` alone cannot receive the result).
-- Opening a second document while the app is already running (`onNewIntent`).
+- Two-pane layout, a second window, build systems and "Show in File Manager".
+- Google Docs upload and the in-place updater (the update check opens the releases page).
 - The on-screen keyboard uses `NativeActivity` key events: plain typing works, but
   predictive text and non-Latin input methods need the `GameActivity` text input path.
-- PDF export, build systems, Find in Files across a folder picker and Google Docs upload
-  are desktop features.
+
+## Signing
+
+Each image build generates a new throwaway test key, so an APK from one build cannot be
+installed over an APK from another: Android asks to uninstall first. For real releases
+keep one keystore, and pass it to the build as `CARGO_APK_RELEASE_KEYSTORE` and
+`CARGO_APK_RELEASE_KEYSTORE_PASSWORD` (in CI: as repository secrets).
 
 ## Publishing to Google Play
 

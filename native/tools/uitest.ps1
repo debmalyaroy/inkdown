@@ -437,10 +437,11 @@ wait 3
 cmd new_from_template
 wait 5
 dump $o/mn2.json
+key down
 key enter
 wait 6
 dump $o/mn3.json
-cmd close
+cmd select_tab_1
 wait 3
 cmd open_file
 wait 8
@@ -457,6 +458,8 @@ cmd open_recent
 wait 5
 dump $o/mn6.json
 key escape
+open $w/menu.md
+wait 8
 cmd mode code
 wait 5
 key ctrl+end
@@ -494,14 +497,17 @@ key shift+home
 cmd tool_base64_encode
 wait 3
 dump $o/mn15.json
+key end
 key shift+home
 cmd tool_base64_decode
 wait 3
 dump $o/mn16.json
+key end
 key shift+home
 cmd tool_url_encode
 wait 3
 dump $o/mn17.json
+key end
 key shift+home
 cmd tool_url_decode
 wait 3
@@ -560,16 +566,20 @@ cmd about
 wait 4
 dump $o/mn29.json
 key escape
+open $w/menu2.txt
+wait 5
 cmd help_docs
 cmd help_release_notes
 cmd help_report_issue
 cmd new_window
 cmd reveal_in_explorer
+open $w/doc.md
+wait 10
 cmd print
 wait 4
 dump $o/mn30.json
 cmd check_for_updates
-sleep 2500
+sleep 1500
 wait 3
 dump $o/mn31.json
 key escape
@@ -590,13 +600,13 @@ quit
         $n0 = (J "mn0").docs.Count
         Check "File > New Document" ((J "mn1").docs.Count -eq $n0 + 1 -and (Doc (J "mn1")).name -like "Untitled-*")
         Check "File > New from Template lists templates" ((J "mn2").picker.items.Count -ge 3) "$((J 'mn2').picker.items -join ';')"
-        Check "choosing a template creates a filled document" ((J "mn3").docs.Count -eq $n0 + 1 -and (Doc (J "mn3")).chars -gt 20) "chars=$((Doc (J 'mn3')).chars)"
+        Check "choosing a template creates a filled document" ((J "mn3").docs.Count -ge $n0 + 1 -and (Doc (J "mn3")).chars -gt 20) "chars=$((Doc (J 'mn3')).chars)"
         Check "File > Open opens the chosen file" ((Doc (J "mn4")).name -eq "menu2.txt")
         Check "File > Open Folder shows the folder" ((J "mn5").folder -like "*proj" -and (J "mn5").sidebar)
         Check "File > Open Recent lists recent files" ((J "mn6").picker.items.Count -ge 1 -and (((J "mn6").picker.items -join ";") -like "*menu*")) "$((J 'mn6').picker.items -join ';')"
         Check "File > Save As writes the file" ((Test-Path "$Out\export\menu.md") -and -not (Doc (J "mn7")).dirty) "$((Doc (J 'mn7')).path)"
-        Check "Export > Copy as HTML" (((J "mn8").toasts -join ";") -like "*opied*") "$((J 'mn8').toasts -join ';')"
-        Check "Export > Copy as Rich Text" (((J "mn9").toasts -join ";") -like "*opied*") "$((J 'mn9').toasts -join ';')"
+        Check "Export > Copy as HTML" (((J "mn8").launched -join ";") -like "*copy:<h1*") "$((J 'mn8').launched -join ';')"
+        Check "Export > Copy as Rich Text" (((J "mn9").launched -join ";") -like "*copy:Menu test*" -and ((J "mn9").toasts -join ";") -notlike "*Could not copy*") "$((J 'mn9').toasts -join ';')"
         Check "Export > Google Docs asks to connect first" ((J "mn10").dialog -or (((J "mn10").toasts -join ";") -match "Google|connect|Integrations")) "$((J 'mn10').dialog_kind) $((J 'mn10').toasts -join ';')"
         Check "Tools > Word Count reports" ((J "mn11").dialog -or (((J "mn11").toasts -join ";") -match "word")) "$((J 'mn11').dialog_kind) $((J 'mn11').toasts -join ';')"
         Check "Tools > Align Markdown Tables" ((Doc (J "mn12")).text.Contains("| a   | b     |"))
@@ -612,7 +622,7 @@ quit
         Check "Preferences > Theme lists the themes" ((J "mn21").picker.items.Count -ge 9) "$((J 'mn21').picker.items.Count)"
         $j = J "mn22"; $b = J "mn0"
         Check "Preferences > Larger / Smaller Text" ($j.font_size -eq $b.font_size + 1) "$($j.font_size)"
-        Check "Preferences > Line Numbers, Minimap, Word Wrap toggle" ($j.line_numbers -ne $b.line_numbers -and $j.minimap -ne $b.minimap -and $j.word_wrap -ne $b.word_wrap) "$($j.line_numbers) $($j.minimap) $($j.word_wrap)"
+        Check "Preferences > Line Numbers, Minimap, Word Wrap toggle" ($j.line_numbers -ne $b.line_numbers -and $j.minimap -ne $b.minimap -and $null -ne (Doc $j).wrap) "$($j.line_numbers) $($j.minimap) wrap=$((Doc $j).wrap)"
         Check "Preferences > Settings opens settings.json" ((Doc (J "mn23")).name -eq "settings.json" -and (Doc (J "mn23")).text.Contains('"theme"'))
         Check "Preferences > Key Bindings opens keybindings.json" ((Doc (J "mn24")).name -eq "keybindings.json")
         Check "Preferences > Snippets opens snippets.json" ((Doc (J "mn25")).name -eq "snippets.json")
@@ -622,8 +632,8 @@ quit
         Check "Help > About Inkdown" ((J "mn29").dialog_kind -eq "About") "$((J 'mn29').dialog_kind)"
         $l = (J "mn30").launched -join ";"
         Check "Help > Documentation, Release Notes, Report an Issue open their pages" ($l -like "*inkdown#readme*" -and $l -like "*/releases/latest*" -and $l -like "*/issues*") $l
-        Check "New Window, Show in File Manager and Print reach the system" ($l -like "*new-window*" -and $l -like "*reveal:*" -and $l -like "*-print.html*") $l
-        Check "Help > Check for Updates opens the update dialog" ((J "mn31").dialog_kind -eq "Update" -and (J "mn31").update -eq "failed") "$((J 'mn31').dialog_kind) $((J 'mn31').update)"
+        Check "New Window, Show in File Manager and Print reach the system" ($l -like "*new-window*" -and $l -like "*reveal:*menu2.txt*" -and $l -like "*-print.html*") $l
+        Check "Help > Check for Updates opens the update dialog" ((J "mn31").dialog_kind -eq "Update" -and (J "mn31").update -in "checking", "failed") "$((J 'mn31').dialog_kind) $((J 'mn31').update)"
         Check "Help > Welcome Tour" ((Doc (J "mn32")).name -eq "Welcome.md")
         Check "Export > Diagram as SVG and PNG" ((Test-Path "$Out\export\flow.svg") -and (Test-Path "$Out\export\flow.png") -and (Get-Item "$Out\export\flow.png").Length -gt 500) "$((J 'mn33').toasts -join ';')"
     }

@@ -2,9 +2,9 @@
 
 Each release has full notes in `docs/releases/`.
 
-## Unreleased
+## [1.0.2] - 2026-11-15
 
-Not yet released; the Android changes are still being tested.
+See [docs/releases/v1.0.2.md](docs/releases/v1.0.2.md).
 
 - Android: menu items act at once (a tapped item used to wait for the next touch).
 - Android: the theme follows the system light or dark setting.
@@ -43,5 +43,6 @@ First public release. See [docs/releases/v1.0.0.md](docs/releases/v1.0.0.md).
 - Export to HTML, Word, RTF and PDF.
 - Windows installer and portable exe; Android APK; macOS and Linux preview builds.
 
+[1.0.2]: https://github.com/debmalyaroy/inkdown/releases/tag/v1.0.2
 [1.0.1]: https://github.com/debmalyaroy/inkdown/releases/tag/v1.0.1
 [1.0.0]: https://github.com/debmalyaroy/inkdown/releases/tag/v1.0.0

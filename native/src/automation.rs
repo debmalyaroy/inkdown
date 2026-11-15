@@ -178,6 +178,7 @@ pub fn dump(app: &InkApp, ctx: &egui::Context) -> serde_json::Value {
                 "kind": d.kind.label(),
                 "mode": d.mode.id(),
                 "dirty": d.dirty(),
+                "wrap": d.wrap,
                 "read_only": d.read_only,
                 "syntax": d.hl.name(),
                 "lines": d.buf.lines(),
