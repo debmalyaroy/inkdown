@@ -97,12 +97,29 @@ pub struct InkApp {
     pub first_frame_ms: Option<f32>,
     pub quit: bool,
     pub updater: crate::update::Updater,
+    /// Smoothed frame figures for the About screen: time to build a frame, time to build
+    /// and paint it, and the gap between frames while they follow each other closely.
+    pub perf: (f32, f32, f32),
+    perf_last: Option<std::time::Instant>,
     /// Sum of whole-frame times (build, tessellate, paint) reported by the windowing layer.
     pub total_sum: f32,
     /// Times the glyph atlas was thrown away and every cached layout rebuilt.
     pub atlas_resets: u32,
     /// Document waiting for the answer of the phone's "save as" picker.
     pending_save: Option<u64>,
+    /// Files handed over by later launches (see instance.rs).
+    pub incoming: Option<std::sync::mpsc::Receiver<Vec<PathBuf>>>,
+    /// When unsaved work was last written to disk, and what the session file holds.
+    persisted_at: f64,
+    session_key: String,
+    was_focused: bool,
+    /// The open bottom sheet of the phone layout.
+    pub sheet: Option<crate::phone::Sheet>,
+    /// Frame in which a sheet or the drawer was opened: the tap that opens one must not
+    /// also count as a tap outside it.
+    pub overlay_opened: u32,
+    /// Palette epoch the phone style tweaks were last applied for.
+    phone_style: u64,
     /// A dialog or picker was open last frame.
     had_overlay: bool,
     /// When the phone glue was last asked for arrived documents.
@@ -173,8 +190,17 @@ impl InkApp {
             inject: Vec::new(),
             pending_save: None,
             had_overlay: false,
+            persisted_at: 0.0,
+            incoming: None,
+            session_key: String::new(),
+            was_focused: true,
+            sheet: None,
+            phone_style: u64::MAX,
+            overlay_opened: u32::MAX,
             mobile_polled: 0.0,
             total_sum: 0.0,
+            perf: (0.0, 0.0, 0.0),
+            perf_last: None,
             atlas_resets: 0,
             first_frame_ms: None,
             quit: false,
@@ -409,6 +435,10 @@ impl InkApp {
             return;
         }
         let d = self.docs.remove(ix);
+        // closed on purpose (saved, or "Don't Save"): its draft goes too
+        if d.draft_version.is_some() {
+            crate::drafts::remove(&d.draft);
+        }
         if let Some(p) = d.path {
             self.closed.push(p);
         }
@@ -438,34 +468,19 @@ impl InkApp {
         if let Some(f) = s.folder.as_deref().map(PathBuf::from).filter(|p| p.is_dir()) {
             self.sidebar.set_folder(Some(f));
         }
+        // unsaved text lives in draft files, one per document
+        let mut drafts: std::collections::HashMap<String, crate::drafts::Draft> = crate::drafts::load_all().into_iter().map(|d| (d.id.clone(), d)).collect();
         for t in &s.tabs {
-            let before = self.docs.len();
-            match &t.path {
-                Some(p) if Path::new(p).is_file() => {
-                    self.open_path(Path::new(p));
-                }
-                Some(_) => continue,
-                None => {
-                    let Some(text) = &t.unsaved else { continue };
-                    let d = Doc::new(None, t.name.clone(), "", &self.set);
-                    self.docs.push(d);
-                    self.docs.last_mut().unwrap().buf.set_text(text);
-                }
-            }
-            if self.docs.len() > before {
-                let set = self.set.clone();
-                let d = self.docs.last_mut().unwrap();
-                if let (Some(text), Some(_)) = (&t.unsaved, &t.path) {
-                    d.buf.set_text(text);
-                }
-                if let Some(m) = Mode::from_id(&t.mode).filter(|m| d.kind.modes().contains(m)) {
-                    d.mode = m;
-                }
-                let _ = set;
-                d.buf.set_caret(t.caret.min(d.buf.len()));
-                d.ed.reveal = true;
-                d.ed.center = true;
-            }
+            let draft = t.draft.as_ref().and_then(|id| drafts.remove(id));
+            let text = draft.as_ref().map(|d| d.text.clone()).or_else(|| t.unsaved.clone());
+            let id = draft.map(|d| d.id);
+            self.restore_tab(t.path.as_deref(), &t.name, text, id, &t.mode, t.caret);
+        }
+        // drafts no tab points at: left by a crash, a forced shutdown or another window
+        let mut orphans: Vec<crate::drafts::Draft> = drafts.into_values().filter(|d| !crate::drafts::writer_alive(d.pid)).collect();
+        orphans.sort_by(|a, b| a.id.cmp(&b.id));
+        for d in orphans {
+            self.restore_tab(d.path.as_deref(), &d.name, Some(d.text), Some(d.id), &d.mode, d.caret);
         }
         self.untitled = self.docs.iter().filter(|d| d.path.is_none()).count();
         if !self.docs.is_empty() {
@@ -473,24 +488,105 @@ impl InkApp {
         }
     }
 
+    /// Reopens one tab of the last session. `text` is its unsaved content, if it had any.
+    fn restore_tab(&mut self, path: Option<&str>, name: &str, text: Option<String>, draft: Option<String>, mode: &str, caret: usize) {
+        let before = self.docs.len();
+        match path {
+            Some(p) if Path::new(p).is_file() => {
+                self.open_path(Path::new(p));
+            }
+            // the file is gone: its unsaved text, if any, comes back as an untitled document
+            _ => {
+                let Some(text) = &text else { return };
+                let d = Doc::new(None, name.to_string(), "", &self.set);
+                self.docs.push(d);
+                self.docs.last_mut().unwrap().buf.set_text(text);
+            }
+        }
+        if self.docs.len() <= before {
+            // the file was already open in another tab: do not lose the draft, show it too
+            if let (Some(text), Some(_)) = (&text, path) {
+                let d = Doc::new(None, format!("{name} (recovered)"), "", &self.set);
+                self.docs.push(d);
+                self.docs.last_mut().unwrap().buf.set_text(text);
+            } else {
+                return;
+            }
+        }
+        let d = self.docs.last_mut().unwrap();
+        if let (Some(text), true) = (&text, d.path.is_some()) {
+            if d.buf.text() != *text {
+                d.buf.set_text(text);
+            }
+        }
+        if let Some(id) = draft {
+            // keep writing to the same draft file
+            d.draft = id;
+            d.draft_version = Some(d.buf.version);
+        }
+        if let Some(m) = Mode::from_id(mode).filter(|m| d.kind.modes().contains(m)) {
+            d.mode = m;
+        }
+        d.buf.set_caret(caret.min(d.buf.len()));
+        d.ed.reveal = true;
+        d.ed.center = true;
+    }
+
+    /// Writes unsaved text to draft files and the list of open tabs to the session file.
+    /// Runs a moment after every change, when the window loses focus, and on exit, so that
+    /// nothing typed is lost however the app ends.
+    pub fn persist(&mut self, now: f64, force: bool) {
+        if !self.set.hot_exit {
+            return;
+        }
+        if !force && now - self.persisted_at < 1.5 {
+            return;
+        }
+        self.persisted_at = now;
+        let pid = std::process::id();
+        for d in &mut self.docs {
+            let keep = !d.scratch && !d.read_only && d.buf.len() > 0 && d.buf.len() < 32 << 20 && (d.dirty() || d.path.is_none());
+            if keep {
+                if d.draft_version != Some(d.buf.version) {
+                    let draft = crate::drafts::Draft { id: d.draft.clone(), name: d.name.clone(), path: d.path.as_ref().map(|p| p.to_string_lossy().to_string()), text: d.buf.text(), mode: d.mode.id().to_string(), caret: d.buf.primary().head, pid };
+                    if crate::drafts::write(&draft).is_ok() {
+                        d.draft_version = Some(d.buf.version);
+                    }
+                }
+            } else if d.draft_version.take().is_some() {
+                // saved, emptied or made read-only: nothing left to protect
+                crate::drafts::remove(&d.draft);
+            }
+        }
+        self.save_session();
+    }
+
+    /// Writes which tabs are open (not their text: see `persist`). Skipped when unchanged.
     pub fn save_session(&mut self) {
         if std::env::var_os("INKDOWN_NO_SESSION").is_some() {
             return;
         }
-        let tabs = self
+        let tabs: Vec<SessionTab> = self
             .docs
             .iter()
             .filter(|d| !d.scratch && (d.path.is_some() || d.buf.len() > 0))
             .map(|d| SessionTab {
                 path: d.path.as_ref().map(|p| p.to_string_lossy().to_string()),
                 name: d.name.clone(),
-                unsaved: (d.dirty() || d.path.is_none()).then(|| d.buf.text()).filter(|t| t.len() < 8 << 20),
+                unsaved: None,
+                draft: d.draft_version.is_some().then(|| d.draft.clone()),
                 caret: d.buf.primary().head,
                 scroll: d.ed.scroll.y,
                 mode: d.mode.id().to_string(),
             })
             .collect();
-        Session { folder: self.sidebar.folder.as_ref().map(|p| p.to_string_lossy().to_string()), active: self.active, tabs }.save();
+        let session = Session { folder: self.sidebar.folder.as_ref().map(|p| p.to_string_lossy().to_string()), active: self.active, tabs };
+        // carets move all the time; only what a restart needs decides whether to write
+        let key = format!("{:?}|{}|{:?}", session.folder, session.active, session.tabs.iter().map(|t| (&t.path, &t.name, &t.draft, &t.mode)).collect::<Vec<_>>());
+        if key != self.session_key {
+            self.session_key = key;
+            session.save();
+        }
     }
 
     // ---------------------------------------------------------- commands
@@ -504,7 +600,7 @@ fn is_navigation(name: &str) -> bool {
 
 /// Commands that do not change the text of the active document.
 fn usable_when_read_only(name: &str) -> bool {
-    const PREFIXES: &[&str] = &["mode", "close", "theme", "open", "new_", "save", "export_", "print", "layout_", "focus_group_", "move_to_group_", "goto_", "show_", "select_tab_", "tool_avro_", "tool_word_count", "reopen_", "set_syntax"];
+    const PREFIXES: &[&str] = &["notes_open", "notes_new", "mode", "close", "theme", "open", "new_", "save", "export_", "print", "layout_", "focus_group_", "move_to_group_", "goto_", "show_", "select_tab_", "tool_avro_", "tool_word_count", "reopen_", "set_syntax"];
     const NAMES: &[&str] = &[
         "check_for_updates", "update_download", "update_install", "help_docs", "help_release_notes", "help_report_issue", "command_palette", "show_shortcuts", "select_theme",
         "cycle_mode", "next_tab", "prev_tab", "next_view", "prev_view", "welcome", "about", "quit", "integrations", "copy_path", "reveal_in_explorer", "revert",
@@ -865,6 +961,7 @@ impl InkApp {
                     }
                 }
             }
+            n if n.starts_with("notes_") => crate::notes::command(self, n, arg),
             n if n.starts_with("export_") || n == "print" => crate::export_ui::command(self, ctx, n),
             n if n.starts_with("tool_") => crate::tools::command(self, ctx, n),
             n if n.starts_with("layout_") || n.starts_with("focus_group_") || n.starts_with("move_to_group_") || n == "new_window" => {
@@ -1063,7 +1160,29 @@ impl InkApp {
             self.title = title.clone();
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
         }
-        if ctx.input(|i| i.viewport().close_requested()) {
+        // files opened from the file manager while this window was already running
+        let mut arrived: Vec<PathBuf> = Vec::new();
+        if let Some(rx) = &self.incoming {
+            while let Ok(files) = rx.try_recv() {
+                arrived.extend(files);
+                // even with no file (the app was simply started again): come to the front
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            }
+        }
+        for f in arrived {
+            self.open_path(&f);
+        }
+        // keep unsaved work on disk: shortly after each change, at once when the window
+        // loses focus (on a phone that is the last moment before the app may be killed),
+        // and on exit
+        let (closing, focused) = ctx.input(|i| (i.viewport().close_requested(), i.focused));
+        let lost_focus = self.was_focused && !focused;
+        self.was_focused = focused;
+        self.persist(now, closing || lost_focus || self.quit);
+        if closing {
+            // carets and scroll positions are worth one last write
+            self.session_key.clear();
             self.save_session();
             self.set.save();
         }
@@ -1164,7 +1283,8 @@ impl InkApp {
         let pal = self.pal;
         let Some(d) = self.docs.get(self.active) else { return };
         let st = self.ed_style(d);
-        let md_bar = d.kind == Kind::Markdown && !d.read_only;
+        // the phone layout has its own formatting strip above the keyboard
+        let md_bar = d.kind == Kind::Markdown && !d.read_only && !crate::phone::active(ui.ctx());
         if md_bar {
             egui::Panel::top(("md-toolbar", editor::pane())).frame(egui::Frame::new().fill(pal.bg).inner_margin(egui::Margin::symmetric(8, 4))).show_separator_line(false).show(ui, |ui| {
                 crate::mdfmt::toolbar(ui, self);
@@ -1481,11 +1601,15 @@ impl eframe::App for InkApp {
         self.tick(&ctx);
 
         let narrow = ctx.content_rect().width() < 720.0;
+        let phone = crate::phone::active(&ctx);
+        #[allow(unused_mut)]
+        let mut inset_bottom = 0.0f32;
         #[cfg(any(target_os = "android", target_os = "ios"))]
         {
             // keep clear of the status bar and the navigation bar
             let (top, bottom) = crate::mobile::insets_px();
             let ppp = ctx.pixels_per_point();
+            inset_bottom = bottom / ppp;
             let pal = self.pal;
             if top > 0.0 {
                 // the system draws its clock and icons in white, so the strip behind them stays dark
@@ -1496,10 +1620,20 @@ impl eframe::App for InkApp {
                 egui::Panel::bottom("inset-bottom").exact_size(bottom / ppp).frame(egui::Frame::new().fill(pal.chrome)).show_separator_line(false).show(ui, |_| {});
             }
         }
-        crate::shell::top_bar(ui, self, narrow);
-        crate::shell::tab_strip(ui, self);
-        if self.set.show_status_bar {
-            crate::shell::status_bar(ui, self);
+        if phone {
+            // fingers, not a mouse: see phone.rs
+            if self.phone_style != self.pal_epoch {
+                self.phone_style = self.pal_epoch;
+                crate::phone::tune_style(&ctx);
+            }
+            crate::phone::top_bar(ui, self);
+            crate::phone::bottom_bar(ui, self, inset_bottom);
+        } else {
+            crate::shell::top_bar(ui, self, narrow);
+            crate::shell::tab_strip(ui, self);
+            if self.set.show_status_bar {
+                crate::shell::status_bar(ui, self);
+            }
         }
         if self.set.show_sidebar && !narrow {
             crate::sidebar::show(ui, self);
@@ -1515,6 +1649,11 @@ impl eframe::App for InkApp {
         crate::shell::toasts(&ctx, self);
         if narrow && self.set.show_sidebar {
             crate::sidebar::drawer(&ctx, self);
+        }
+        if phone {
+            crate::phone::sheet(&ctx, self, if inset_bottom > 180.0 { 0.0 } else { inset_bottom });
+        } else {
+            self.sheet = None;
         }
         // The default window is 1280 x 840 points. On a smaller screen (a 1366 x 768 laptop at
         // 125 % is only 1093 x 614 points) shrink it so that it fits on the screen.
@@ -1554,7 +1693,7 @@ impl eframe::App for InkApp {
             });
         }
         // when a dialog or picker closes, typing goes to the document again without a click
-        let overlay = self.dialog.is_some() || self.picker.is_some();
+        let overlay = self.dialog.is_some() || self.picker.is_some() || self.sheet.is_some();
         if self.had_overlay && !overlay {
             if let Some(d) = self.docs.get_mut(self.active) {
                 d.ed.focus = true;
@@ -1584,6 +1723,20 @@ impl eframe::App for InkApp {
             },
         }
         self.frame_ms = t0.elapsed().as_secs_f32() * 1000.0;
+        {
+            let now_i = std::time::Instant::now();
+            let gap = self.perf_last.map(|l| now_i.duration_since(l).as_secs_f32() * 1000.0);
+            self.perf_last = Some(now_i);
+            let mix = |old: f32, new: f32| if old == 0.0 { new } else { old * 0.92 + new * 0.08 };
+            self.perf.0 = mix(self.perf.0, self.frame_ms);
+            if cpu_ms > 0.0 {
+                self.perf.1 = mix(self.perf.1, cpu_ms);
+            }
+            // only frames that follow each other closely say something about smoothness
+            if let Some(g) = gap.filter(|g| *g < 120.0) {
+                self.perf.2 = mix(self.perf.2, g);
+            }
+        }
         // on a phone, a line in the system log every 120 frames tells how smooth things are:
         // time spent building a frame, and the gap between frames while they follow closely
         #[cfg(target_os = "android")]

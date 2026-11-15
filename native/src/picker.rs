@@ -27,6 +27,8 @@ pub enum PickKind {
     Templates,
     Snippets,
     Builds,
+    /// Where to file a note.
+    Notebooks,
 }
 
 #[derive(Clone)]
@@ -103,6 +105,11 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
     ("save_as", "File: Save As…", icons::SAVE),
     ("save_all", "File: Save All", icons::SAVE),
     ("revert", "File: Revert to Saved", icons::REFRESH_CW),
+    ("notes_file", "Notes: File in Notes…", icons::FOLDER),
+    ("notes_file_to", "Notes: File in Inbox", icons::FOLDER),
+    ("notes_file_all", "Notes: File All Drafts in Inbox", icons::FOLDER),
+    ("notes_open", "Notes: Browse Notes", icons::FOLDER_OPEN),
+    ("notes_new_notebook", "Notes: New Notebook…", icons::FILE_PLUS),
     ("close", "File: Close Tab", icons::X),
     ("close_others", "File: Close Other Tabs", icons::X),
     ("close_all", "File: Close All Tabs", icons::X),
@@ -453,6 +460,12 @@ impl Picker {
                     self.items.push(Item { label: trigger.clone(), detail: body.lines().next().unwrap_or("").chars().take(60).collect(), icon: icons::ZAP, act: Act::Snippet(body.clone()) });
                 }
             }
+            PickKind::Notebooks => {
+                for n in crate::notes::notebooks(app) {
+                    self.items.push(Item { label: n.clone(), detail: "notebook".into(), icon: icons::FOLDER, act: Act::Command(format!("notes_file_to {n}")) });
+                }
+                self.items.push(Item { label: "New notebook…".into(), detail: String::new(), icon: icons::FILE_PLUS, act: Act::Command("notes_new_notebook".into()) });
+            }
             PickKind::Builds => {
                 for (i, b) in crate::project::build_systems(&app.set).iter().enumerate() {
                     self.items.push(Item { label: b.name.clone(), detail: b.cmd.join(" "), icon: icons::HAMMER, act: Act::Build(i) });
@@ -657,6 +670,7 @@ pub fn show(ctx: &egui::Context, app: &mut InkApp) {
                 PickKind::Syntax => "Set syntax",
                 PickKind::Templates => "New from template",
                 PickKind::Recent => "Open recent",
+                PickKind::Notebooks => "File this note in",
                 _ => "Type to filter",
             };
             let edit = ui.add(egui::TextEdit::singleline(&mut p.query).hint_text(hint).desired_width(f32::INFINITY).font(egui::FontId::proportional(15.5)).margin(egui::Margin::symmetric(10, 9)).frame(egui::Frame::new()));

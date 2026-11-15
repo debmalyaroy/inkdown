@@ -771,7 +771,10 @@ pub fn show(ui: &mut Ui, app: &mut InkApp) {
     let now = ui.input(|i| i.time);
     let full_outer = ui.available_rect_before_wrap();
     ui.painter().rect_filled(full_outer, CornerRadius::ZERO, pal.chrome);
-    egui::Panel::top(("rich-ribbon", crate::editor::pane())).frame(egui::Frame::new().fill(pal.chrome).inner_margin(egui::Margin::symmetric(10, 5))).show_separator_line(false).show(ui, |ui| ribbon(ui, app));
+    // the phone layout has its own formatting strip above the keyboard
+    if !crate::phone::active(ui.ctx()) {
+        egui::Panel::top(("rich-ribbon", crate::editor::pane())).frame(egui::Frame::new().fill(pal.chrome).inner_margin(egui::Margin::symmetric(10, 5))).show_separator_line(false).show(ui, |ui| ribbon(ui, app));
+    }
     let find_open = app.docs.get(app.active).is_some_and(|d| d.ed.find.open);
     if find_open {
         let d = &mut app.docs[app.active];

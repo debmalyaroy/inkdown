@@ -51,6 +51,14 @@ fn main_menu(ui: &mut Ui, app: &mut InkApp) {
     menu_item(ui, app, icons::SAVE, "Save As…", "save_as");
     menu_item(ui, app, icons::SAVE, "Save All", "save_all");
     ui.separator();
+    ui.menu_button(format!("{}   Notes", icons::FOLDER), |ui| {
+        menu_item(ui, app, icons::FOLDER, "File in Notes…", "notes_file");
+        menu_item(ui, app, icons::FOLDER, "File in Inbox", "notes_file_to");
+        menu_item(ui, app, icons::FOLDER, "File All Drafts in Inbox", "notes_file_all");
+        ui.separator();
+        menu_item(ui, app, icons::FOLDER_OPEN, "Browse Notes", "notes_open");
+        menu_item(ui, app, icons::FILE_PLUS, "New Notebook…", "notes_new_notebook");
+    });
     ui.menu_button(format!("{}   Edit", icons::PENCIL), |ui| {
         menu_item(ui, app, icons::UNDO_2, "Undo", "undo");
         menu_item(ui, app, icons::REDO_2, "Redo", "redo");
@@ -678,8 +686,12 @@ pub fn dialogs(ctx: &egui::Context, app: &mut InkApp) {
                     ui.label(egui::RichText::new("A universal editor: Markdown, code, data and diagrams.\nPure Rust: no web view, no JavaScript.").color(pal.muted));
                     ui.add_space(8.0);
                     if let Some(mb) = crate::platform::memory_mb() {
-                        ui.label(egui::RichText::new(format!("Using {mb:.0} MB of memory · last frame {:.1} ms", app.frame_ms)).size(11.5).color(pal.faint));
+                        ui.label(egui::RichText::new(format!("Using {mb:.0} MB of memory")).size(11.5).color(pal.faint));
                     }
+                    // scroll a document, then open this screen: these show how smooth it was
+                    let (build, total, gap) = app.perf;
+                    let fps = if gap > 0.0 { 1000.0 / gap } else { 0.0 };
+                    ui.label(egui::RichText::new(format!("Frames: build {build:.1} ms · paint {:.1} ms · {gap:.1} ms apart ({fps:.0} per second)", (total - build).max(0.0))).size(11.5).color(pal.faint));
                     ui.add_space(14.0);
                     ui.horizontal(|ui| {
                         // centre the two buttons

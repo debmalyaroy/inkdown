@@ -72,6 +72,8 @@ pub struct Settings {
     pub markdown_mode: String,
     pub recent_files: Vec<String>,
     pub recent_folders: Vec<String>,
+    /// Where "File in Notes" puts notes. Empty means `Documents/Inkdown Notes`.
+    pub notes_folder: String,
     /// Extra build systems: `{ "name": .., "selector": ["rs"], "cmd": ["cargo", "run"] }`.
     pub build_systems: Vec<BuildSystem>,
 }
@@ -119,6 +121,7 @@ impl Default for Settings {
             markdown_mode: "read".into(),
             recent_files: Vec::new(),
             recent_folders: Vec::new(),
+            notes_folder: String::new(),
             build_systems: Vec::new(),
         }
     }
@@ -245,8 +248,10 @@ pub struct Session {
 pub struct SessionTab {
     pub path: Option<String>,
     pub name: String,
-    /// Present only when the buffer had unsaved changes.
+    /// Unsaved text stored in the session file itself (written by versions before 1.1).
     pub unsaved: Option<String>,
+    /// The draft file holding this tab's unsaved text, if it has any.
+    pub draft: Option<String>,
     pub caret: usize,
     pub scroll: f32,
     pub mode: String,
@@ -259,7 +264,11 @@ impl Session {
     pub fn save(&self) {
         let _ = std::fs::create_dir_all(config_dir());
         if let Ok(t) = serde_json::to_string(self) {
-            let _ = std::fs::write(session_path(), t);
+            // write beside the file and rename, so that a crash never leaves half a session
+            let tmp = session_path().with_extension("json.tmp");
+            if std::fs::write(&tmp, t).is_ok() {
+                let _ = std::fs::rename(&tmp, session_path());
+            }
         }
     }
 }

@@ -2,6 +2,17 @@
 
 Each release has full notes in `docs/releases/`.
 
+## [1.1.0] - 2026-11-15
+
+See [docs/releases/v1.1.0.md](docs/releases/v1.1.0.md).
+
+- Unsaved work is kept in draft files and restored after any kind of exit; a second
+  launch hands its file to the running window.
+- Notes: file drafts as Markdown into notebooks, file all drafts, browse notes.
+- A phone interface: bottom mode switch, formatting strip, bottom sheets.
+- Find, Replace and Find in Files understand look-around and back-references.
+- Frame timings on the About screen.
+
 ## [1.0.3] - 2026-11-15
 
 See [docs/releases/v1.0.3.md](docs/releases/v1.0.3.md).
@@ -50,6 +61,7 @@ First public release. See [docs/releases/v1.0.0.md](docs/releases/v1.0.0.md).
 - Export to HTML, Word, RTF and PDF.
 - Windows installer and portable exe; Android APK; macOS and Linux preview builds.
 
+[1.1.0]: https://github.com/debmalyaroy/inkdown/releases/tag/v1.1.0
 [1.0.3]: https://github.com/debmalyaroy/inkdown/releases/tag/v1.0.3
 [1.0.2]: https://github.com/debmalyaroy/inkdown/releases/tag/v1.0.2
 [1.0.1]: https://github.com/debmalyaroy/inkdown/releases/tag/v1.0.1

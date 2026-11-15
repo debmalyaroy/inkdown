@@ -4,6 +4,12 @@
 
 pub mod adoc;
 pub mod app;
+pub mod drafts;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub mod instance;
+pub mod notes;
+pub mod phone;
+pub mod rx;
 pub mod avro;
 pub mod update;
 pub mod assets;
@@ -121,6 +127,10 @@ pub fn run_cli(args: &[String]) -> Option<i32> {
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn run_desktop() -> eframe::Result {
     let files: Vec<PathBuf> = std::env::args().skip(1).filter(|a| !a.starts_with("--")).map(PathBuf::from).collect();
+    // already running: hand the files to that window and leave
+    if instance::forward(&files) {
+        return Ok(());
+    }
     let mut viewport = egui::ViewportBuilder::default().with_inner_size([1280.0, 840.0]).with_min_inner_size([360.0, 300.0]).with_title("Inkdown").with_drag_and_drop(true).with_app_id("inkdown");
     if let Some(i) = icon() {
         viewport = viewport.with_icon(i);
@@ -129,7 +139,18 @@ pub fn run_desktop() -> eframe::Result {
         viewport = viewport.with_inner_size(size);
     }
     let options = eframe::NativeOptions { viewport, ..Default::default() };
-    eframe::run_native("Inkdown", options, Box::new(move |cc| Ok(Box::new(app::InkApp::new(cc, files)))))
+    let result = eframe::run_native(
+        "Inkdown",
+        options,
+        Box::new(move |cc| {
+            let mut app = app::InkApp::new(cc, files);
+            let ctx = cc.egui_ctx.clone();
+            app.incoming = instance::listen(move || ctx.request_repaint());
+            Ok(Box::new(app))
+        }),
+    );
+    instance::release();
+    result
 }
 
 /// Android entry point (NativeActivity).

@@ -48,12 +48,12 @@ pub struct Find {
 }
 
 impl Find {
-    pub fn pattern(&self) -> Result<regex::Regex, String> {
-        let mut p = if self.regex { self.query.clone() } else { regex::escape(&self.query) };
+    pub fn pattern(&self) -> Result<crate::rx::Pattern, String> {
+        let mut p = if self.regex { self.query.clone() } else { crate::rx::escape(&self.query) };
         if self.word {
             p = format!(r"\b(?:{p})\b");
         }
-        regex::RegexBuilder::new(&p).case_insensitive(!self.case).multi_line(true).build().map_err(|e| e.to_string().lines().last().unwrap_or("Invalid pattern").trim().to_string())
+        crate::rx::Pattern::new(&p, self.case, true)
     }
 
     pub fn update(&mut self, buf: &Buffer) {
@@ -80,17 +80,13 @@ impl Find {
             _ => (0, text.len()),
         };
         let started = Instant::now();
-        for m in re.find_iter(&text[lo..hi]) {
-            if m.start() == m.end() {
-                continue;
+        let found = &mut self.matches;
+        re.scan(&text[lo..hi], |start, end| {
+            if start != end {
+                found.push((buf.rope.byte_to_char(lo + start), buf.rope.byte_to_char(lo + end)));
             }
-            let a = buf.rope.byte_to_char(lo + m.start());
-            let z = buf.rope.byte_to_char(lo + m.end());
-            self.matches.push((a, z));
-            if self.matches.len() >= 100_000 || started.elapsed() > Duration::from_millis(400) {
-                break;
-            }
-        }
+            found.len() < 100_000 && started.elapsed() <= Duration::from_millis(400)
+        });
     }
 
     /// Index of the first match starting at or after `pos`.
@@ -981,14 +977,7 @@ impl EdView {
         }
         let Ok(re) = self.find.pattern() else { return self.find.replacement.clone() };
         let text = buf.slice(a, z);
-        match re.captures(&text) {
-            Some(c) => {
-                let mut out = String::new();
-                c.expand(&self.find.replacement.replace("\\n", "\n").replace("\\t", "\t"), &mut out);
-                out
-            }
-            None => self.find.replacement.clone(),
-        }
+        re.expand(&text, &self.find.replacement.replace("\\n", "\n").replace("\\t", "\t")).unwrap_or_else(|| self.find.replacement.clone())
     }
 
     pub fn replace_one(&mut self, buf: &mut Buffer) -> bool {

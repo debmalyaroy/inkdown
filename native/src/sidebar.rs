@@ -373,7 +373,7 @@ pub fn drawer(ctx: &egui::Context, app: &mut InkApp) {
         });
     });
     let dismissed = ctx.input(|i| (i.pointer.any_pressed() && !resp.response.contains_pointer()) || i.key_pressed(egui::Key::Escape));
-    if dismissed {
+    if dismissed && app.overlay_opened != app.frame_count {
         app.set.show_sidebar = false;
     }
 }

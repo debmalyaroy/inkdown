@@ -46,15 +46,15 @@ pub struct Search {
     pub confirm_replace: bool,
 }
 
-pub fn build_regex(query: &str, regex: bool, case: bool, word: bool) -> Result<regex::Regex, String> {
-    let mut p = if regex { query.to_string() } else { regex::escape(query) };
+pub fn build_regex(query: &str, regex: bool, case: bool, word: bool) -> Result<crate::rx::Pattern, String> {
+    let mut p = if regex { query.to_string() } else { crate::rx::escape(query) };
     if word {
         p = format!(r"\b(?:{p})\b");
     }
-    regex::RegexBuilder::new(&p).case_insensitive(!case).build().map_err(|e| e.to_string().lines().last().unwrap_or("Invalid pattern").trim().to_string())
+    crate::rx::Pattern::new(&p, case, false)
 }
 
-fn search_file(path: &Path, re: &regex::Regex, out: &mut Vec<Hit>) {
+fn search_file(path: &Path, re: &crate::rx::Pattern, out: &mut Vec<Hit>) {
     let Ok(meta) = std::fs::metadata(path) else { return };
     if meta.len() > 6 * 1024 * 1024 {
         return;
@@ -68,12 +68,12 @@ fn search_file(path: &Path, re: &regex::Regex, out: &mut Vec<Hit>) {
         if line.len() > 2000 {
             continue;
         }
-        for m in re.find_iter(line) {
-            if m.start() == m.end() {
+        for (start, end) in re.matches(line) {
+            if start == end {
                 continue;
             }
             let shown: String = line.trim_end().chars().take(240).collect();
-            out.push(Hit { path: path.to_path_buf(), line: ln, col: line[..m.start()].chars().count(), len: line[m.start()..m.end()].chars().count(), text: shown });
+            out.push(Hit { path: path.to_path_buf(), line: ln, col: line[..start].chars().count(), len: line[start..end].chars().count(), text: shown });
             if out.len() >= 200 {
                 return;
             }
@@ -185,7 +185,7 @@ pub fn replace_in_files(app: &mut InkApp) {
             continue;
         };
         let new = re.replace_all(&text, rep.as_str());
-        if new != text {
+        if new != *text {
             match std::fs::write(f, crate::doc::encode(&new, enc, bom)) {
                 Ok(()) => changed += 1,
                 Err(_) => failed += 1,
@@ -462,7 +462,7 @@ pub fn goto_definition(app: &mut InkApp) {
                 continue;
             }
             let mut local = Vec::new();
-            search_file(&f, &re, &mut local);
+            search_file(&f, &crate::rx::Pattern::Fast(re.clone()), &mut local);
             for mut h in local {
                 h.col = h.text.find(&word).map(|b| h.text[..b].chars().count()).unwrap_or(h.col);
                 h.len = word.chars().count();

@@ -96,6 +96,7 @@ mod imp {
             return;
         }
         if let Ok(exe) = std::env::current_exe() {
+            // a separate window on purpose: it neither restores nor joins the running session
             let _ = std::process::Command::new(exe).env("INKDOWN_NO_SESSION", "1").spawn();
         }
     }

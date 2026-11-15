@@ -158,6 +158,9 @@ impl Automation {
                 app.frame_count = 0;
                 app.total_sum = 0.0;
             }
+            // ends this test process abruptly, as a crash or a forced shutdown would:
+            // nothing gets a chance to save
+            "crash" => std::process::exit(3),
             "quit" => {
                 app.quit = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -212,6 +215,7 @@ pub fn dump(app: &InkApp, ctx: &egui::Context) -> serde_json::Value {
         "launched": crate::platform::launched(),
         "bottom": format!("{:?}", app.bottom),
         "split": app.split.is_some(),
+        "sheet": app.sheet.map(|s| format!("{s:?}")),
         "minimap": app.set.minimap,
         "word_wrap": app.set.word_wrap,
         "font_size": app.set.font_size,

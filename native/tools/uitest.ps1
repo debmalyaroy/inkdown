@@ -414,6 +414,121 @@ quit
     }
 }
 
+# ----------------------------------------------------------------- drafts
+# Unsaved work must survive however the app ends, and a second launch must not disturb it.
+if (Want "drafts") {
+    Write-Host "drafts"
+    Set-Content "$Out\work\kept.txt" "on disk`n" -NoNewline
+    Set-Content "$Out\work\gone.txt" "will be deleted`n" -NoNewline
+    Set-Content "$Out\work\later.md" "# Opened later`n" -NoNewline
+    $s = @"
+wait 10
+cmd new_file
+type first draft
+cmd new_code_file
+type second draft
+open $w/kept.txt
+wait 5
+key ctrl+end
+type EDITED
+open $w/gone.txt
+wait 5
+key ctrl+end
+type CHANGED
+sleep 2600
+wait 3
+dump $o/dr1.json
+crash
+"@
+    if (Run "drafts" $s) {
+        Check "drafts are written to disk while the app runs" ((Get-ChildItem "$Out\profile\config\drafts" -Filter *.json -ErrorAction SilentlyContinue).Count -eq 4) "$((Get-ChildItem "$Out\profile\config\drafts" -ErrorAction SilentlyContinue).Count) files"
+        Remove-Item "$Out\work\gone.txt"
+        if (Run "drafts2" "wait 25`ndump $o/dr2.json`ncmd select_tab_1`ncmd close`nwait 4`nkey escape`ndump $o/dr3.json`nquit" -Keep) {
+            $j = J "dr2"; $names = $j.docs.name -join ","
+            Check "after a crash, untitled drafts come back" ((($j.docs | Where-Object { $_.text -eq "first draft" }).Count -eq 1) -and (($j.docs | Where-Object { $_.text -eq "second draft" }).Count -eq 1)) $names
+            $k = $j.docs | Where-Object { $_.name -eq "kept.txt" }
+            Check "after a crash, unsaved edits to a file come back, and the file is untouched" ($k.text -eq "on disk`nEDITED" -and $k.dirty -and (Get-Content "$Out\work\kept.txt" -Raw) -eq "on disk`n") "$($k.text)"
+            Check "unsaved edits to a file that was deleted come back as a document" ((($j.docs | Where-Object { $_.text -eq "will be deleted`nCHANGED" }).Count -eq 1)) $names
+            Check "the welcome tour does not reappear over restored work" (($j.docs | Where-Object { $_.name -eq "Welcome.md" }).Count -eq 0) $names
+        }
+        # a normal exit keeps them too, and what was closed on purpose stays closed
+        if (Run "drafts3" "wait 25`ndump $o/dr4.json`nquit" -Keep) {
+            $j = J "dr4"
+            Check "drafts survive a normal exit as well" ((($j.docs | Where-Object { $_.text -eq "second draft" }).Count -eq 1) -and (($j.docs | Where-Object { $_.name -eq "kept.txt" -and $_.dirty }).Count -eq 1)) "$($j.docs.name -join ',')"
+        }
+    }
+    # a second launch hands its file to the running window instead of opening another
+    Remove-Item -Recurse -Force "$Out\profile" -ErrorAction SilentlyContinue
+    Set-Content "$Out\inst.txt" "wait 10`ncmd new_file`ntype keep me`nsleep 9000`nwait 5`ndump $o/in1.json`nquit"
+    $env:INKDOWN_DATA_DIR = "$Out\profile"; $env:INKDOWN_WINDOW = "1280x840"; $env:INKDOWN_SINGLE_INSTANCE = "1"
+    $env:INKDOWN_AUTOMATION = "$Out\inst.txt"
+    $first = Start-Process -FilePath $exe -PassThru
+    Start-Sleep 4
+    Remove-Item Env:INKDOWN_AUTOMATION
+    $second = Start-Process -FilePath $exe -ArgumentList "`"$Out\work\later.md`"" -PassThru
+    $handed = $second.WaitForExit(8000)
+    if (-not $handed) { $second.Kill() }
+    if (-not $first.WaitForExit(60000)) { $first.Kill() }
+    Remove-Item Env:INKDOWN_SINGLE_INSTANCE
+    Check "a second launch exits after handing over its file" ($handed -and $second.ExitCode -eq 0) "exited=$handed"
+    if (Test-Path "$Out\in1.json") {
+        $j = J "in1"
+        Check "the running window opens that file and keeps its draft" ((($j.docs | Where-Object { $_.name -eq "later.md" }).Count -eq 1) -and (($j.docs | Where-Object { $_.text -eq "keep me" }).Count -eq 1)) "$($j.docs.name -join ',')"
+    } else { Check "the running window opens that file and keeps its draft" $false "no dump" }
+}
+
+# ------------------------------------------------------------------ notes
+if (Want "notes") {
+    Write-Host "notes"
+    Remove-Item -Recurse -Force "$Out\profile", "$Out\notes" -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force "$Out\profile\config", "$Out\notes\Projects" | Out-Null
+    Set-Content "$Out\profile\config\settings.json" ('{ "notes_folder": "' + "$o/notes" + '" }')
+    Set-Content "$Out\work\loose.md" "# Loose file`n`nSaved somewhere else.`n" -NoNewline
+    $s = @"
+wait 10
+cmd new_file
+type # Trip plan
+key enter
+key enter
+type Pack light
+cmd notes_file_to
+wait 6
+dump $o/nt1.json
+cmd new_code_file
+type call the bank / before 5?
+cmd new_file
+type ## Reading list
+key enter
+type - one
+cmd notes_file_all
+wait 6
+dump $o/nt2.json
+open $w/loose.md
+wait 8
+cmd notes_file
+wait 5
+dump $o/nt3.json
+type proj
+key enter
+wait 8
+dump $o/nt4.json
+cmd notes_open
+wait 15
+dump $o/nt5.json
+quit
+"@
+    if (Run "notes" $s -Keep) {
+        $d = Doc (J "nt1")
+        Check "a draft is filed in the Inbox as Markdown, named after its first line" ($d.name -eq "Trip plan.md" -and -not $d.dirty -and (Test-Path "$Out\notes\Inbox\Trip plan.md") -and (Get-Content "$Out\notes\Inbox\Trip plan.md" -Raw).StartsWith("# Trip plan")) "$($d.name) $($d.path)"
+        $inbox = (Get-ChildItem "$Out\notes\Inbox" -ErrorAction SilentlyContinue).Name -join ","
+        Check "File All Drafts files every unsaved draft" ((Test-Path "$Out\notes\Inbox\call the bank before 5.md") -and (Test-Path "$Out\notes\Inbox\Reading list.md") -and (((J "nt2").docs | Where-Object { -not $_.path -and $_.name -ne "Welcome.md" }).Count -eq 0)) $inbox
+        Check "the notebook picker lists Inbox, the notebooks and New notebook" ((((J "nt3").picker.items -join ";") -like "Inbox*Projects*New notebook*")) "$((J 'nt3').picker.items -join ';')"
+        Check "a saved file moves into the chosen notebook" ((Test-Path "$Out\notes\Projects\loose.md") -and -not (Test-Path "$Out\work\loose.md") -and (Doc (J "nt4")).path -like "*Projects*loose.md") "$((Doc (J 'nt4')).path)"
+        Check "Browse Notes opens the notes folder in the sidebar" ((J "nt5").folder -like "*notes" -and (J "nt5").sidebar) "$((J 'nt5').folder)"
+        Check "filed notes leave no draft files behind" ((Get-ChildItem "$Out\profile\config\drafts" -Filter *.json -ErrorAction SilentlyContinue).Count -eq 0)
+    }
+}
+
 # ------------------------------------------------------------------ menus
 # Every item of the main menu, its submenus and the toolbar, by command and by click.
 if (Want "menus") {

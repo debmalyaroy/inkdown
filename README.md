@@ -15,7 +15,7 @@ The animation above is also available as a video: [inkdown-demo.mp4](docs/media/
 
 ## Download
 
-**Current release: [v1.0.3](https://github.com/debmalyaroy/inkdown/releases/latest)** ([release notes](docs/releases/v1.0.3.md), [all releases](https://github.com/debmalyaroy/inkdown/releases))
+**Current release: [v1.1.0](https://github.com/debmalyaroy/inkdown/releases/latest)** ([release notes](docs/releases/v1.1.0.md), [all releases](https://github.com/debmalyaroy/inkdown/releases))
 
 | Platform | Download | Status |
 | --- | --- | --- |
@@ -48,6 +48,7 @@ Checksums for every file are in `SHA256SUMS.txt` on the release page.
 
 | Version | Date | What changed | Notes |
 | --- | --- | --- | --- |
+| [1.1.0](https://github.com/debmalyaroy/inkdown/releases/tag/v1.1.0) | 2026-11-15 | Unsaved work is never lost (draft files, one window per user), Notes and notebooks, a phone interface, look-around in Find | [notes](docs/releases/v1.1.0.md) |
 | [1.0.3](https://github.com/debmalyaroy/inkdown/releases/tag/v1.0.3) | 2026-11-15 | Android package signed with a permanent key, so updates install over the old version | [notes](docs/releases/v1.0.3.md) |
 | [1.0.2](https://github.com/debmalyaroy/inkdown/releases/tag/v1.0.2) | 2026-11-15 | Android: working menus, system theme, touch scrolling, file pickers, print, clipboard. Edit menu on every platform | [notes](docs/releases/v1.0.2.md) |
 | [1.0.1](https://github.com/debmalyaroy/inkdown/releases/tag/v1.0.1) | 2026-11-14 | Updater, Help menu, fix for commands on read-only documents, GPL licence | [notes](docs/releases/v1.0.1.md) |
@@ -99,6 +100,13 @@ Every feature is tracked as a GitHub issue:
   into a new document.
 - **Export**: HTML, Word (`.docx`), Rich Text, PDF (through an installed Edge or Chrome),
   copy as rich text, upload to Google Docs with your own OAuth client.
+- **Nothing typed is lost**: every unsaved tab and every unsaved change is kept in a draft
+  file and restored on the next start, whether the app was closed, crashed or was killed.
+  Opening a file while Inkdown runs adds a tab to the running window.
+- **Notes**: file a draft as a Markdown note, named after its first line, into a notebook
+  in your Notes folder; file all drafts at once; browse and reorganise notebooks.
+- **Phones**: a touch interface with the modes along the bottom edge, a formatting strip
+  above the keyboard, and bottom sheets instead of menus.
 - **Updates**: Inkdown looks for a new release once a day and offers it; on Windows the
   installed copy downloads the installer, verifies its checksum and restarts into the new
   version. *Help > Check for Updates* does it on demand. Turn the daily check off with
@@ -155,9 +163,9 @@ platform nobody has used it on. That is why macOS and Linux are labelled *previe
 
 ## Tests
 
-- `make test`: 43 unit tests (text buffer, editing commands, Markdown layout, exports, data
+- `make test`: 46 unit tests (text buffer, editing commands, Markdown layout, exports, data
   conversion). Run by CI on Windows, macOS and Linux.
-- `pwsh build.ps1 uitest`: 106 end-to-end checks that drive the real window through a
+- `pwsh build.ps1 uitest`: 120 end-to-end checks that drive the real window through a
   scripted input driver in an isolated profile: every mode, multi-cursor editing, the
   designer, session restore, exports and performance budgets. Windows only, run locally
   (GitHub's runners have no GPU for the window).

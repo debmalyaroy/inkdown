@@ -131,6 +131,10 @@ pub struct Doc {
     pub view: crate::preview::ViewState,
     /// Scratch buffers (search results, build output) are never "dirty".
     pub scratch: bool,
+    /// Name of this document's draft file (see drafts.rs).
+    pub draft: String,
+    /// Buffer version last written to the draft file; `None` when no draft file exists.
+    pub draft_version: Option<u64>,
 }
 
 fn next_id() -> u64 {
@@ -228,6 +232,8 @@ impl Doc {
             bytes: None,
             view: Default::default(),
             scratch: false,
+            draft: crate::drafts::new_id(),
+            draft_version: None,
         };
         d.mode = d.default_mode(set);
         d.apply_settings(set, text);
