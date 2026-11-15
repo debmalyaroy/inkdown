@@ -653,7 +653,7 @@ quit
             }
             # a double click on an empty part of the page zooms in, a second one zooms out again
             $bx = [int]($f[0] + 420 * $f[2]); $by = [int]($f[1] + 262 * $f[2])
-            if (Run "pdf-zoom" "wait 10`nopen $w/sample.pdf`nwait 30`nsleep 1200`nwait 5`ndclick $bx $by`nwait 12`ndump $o/pdf12.json`ndclick $bx $by`nwait 12`ndump $o/pdf13.json`nquit") {
+            if (Run "pdf-zoom" "wait 10`nopen $w/sample.pdf`nwait 30`nsleep 1200`nwait 5`ndclick $bx $by`nwait 12`ndump $o/pdf12.json`nsleep 900`nwait 3`ndclick $bx $by`nwait 12`ndump $o/pdf13.json`nquit") {
                 $z1 = (Doc (J "pdf12")).pdf_first_page[2]; $z2 = (Doc (J "pdf13")).pdf_first_page[2]
                 Check "a double click on the page zooms in, and a second one back out" ($z1 -gt $f[2] * 1.9 -and [math]::Abs($z2 - $f[2]) -lt 0.02) "scale $($f[2]) -> $z1 -> $z2"
             }
