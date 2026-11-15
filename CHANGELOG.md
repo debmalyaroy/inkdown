@@ -2,6 +2,13 @@
 
 Each release has full notes in `docs/releases/`.
 
+## [1.0.3] - 2026-11-15
+
+See [docs/releases/v1.0.3.md](docs/releases/v1.0.3.md).
+
+- Android: the package is signed with a permanent key, so later versions install over
+  it. No other changes.
+
 ## [1.0.2] - 2026-11-15
 
 See [docs/releases/v1.0.2.md](docs/releases/v1.0.2.md).
@@ -43,6 +50,7 @@ First public release. See [docs/releases/v1.0.0.md](docs/releases/v1.0.0.md).
 - Export to HTML, Word, RTF and PDF.
 - Windows installer and portable exe; Android APK; macOS and Linux preview builds.
 
+[1.0.3]: https://github.com/debmalyaroy/inkdown/releases/tag/v1.0.3
 [1.0.2]: https://github.com/debmalyaroy/inkdown/releases/tag/v1.0.2
 [1.0.1]: https://github.com/debmalyaroy/inkdown/releases/tag/v1.0.1
 [1.0.0]: https://github.com/debmalyaroy/inkdown/releases/tag/v1.0.0

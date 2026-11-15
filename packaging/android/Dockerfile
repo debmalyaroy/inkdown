@@ -50,9 +50,19 @@ WORKDIR /src/native
 # The build directory and the crate registry are kept in BuildKit caches, so a rebuild after a
 # source change only recompiles Inkdown itself. JOBS caps parallel compiler processes (memory).
 ARG JOBS=6
+# Signing: pass a real keystore as build secrets and the package is signed with it,
+#   docker build --secret id=android_keystore,src=release.keystore \
+#                --secret id=android_keystore_password,src=password.txt ...
+# otherwise the throwaway test key above is used. Secrets are not stored in the image.
 RUN --mount=type=cache,target=/src/native/target,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=secret,id=android_keystore \
+    --mount=type=secret,id=android_keystore_password \
     CARGO_BUILD_JOBS=$JOBS cargo apk build --release --lib \
-    && mkdir -p /apk && sh ../packaging/android/package.sh target/release/apk/inkdown.apk /apk/inkdown.apk
+    && mkdir -p /apk \
+    && if [ -s /run/secrets/android_keystore ]; then \
+         export ANDROID_KEYSTORE=/run/secrets/android_keystore ANDROID_KEYSTORE_PASSWORD_FILE=/run/secrets/android_keystore_password; \
+       fi \
+    && sh ../packaging/android/package.sh target/release/apk/inkdown.apk /apk/inkdown.apk
 
 CMD ["sh", "-c", "cp /apk/*.apk /out/ && ls -la /out"]

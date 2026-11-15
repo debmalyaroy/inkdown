@@ -19,7 +19,7 @@ credited in the release notes, unless you prefer otherwise.
 ## What to know about the builds
 
 - The Windows installer and the macOS app are **not code-signed** yet, and the Android APK
-  is signed with a test key. Check downloads against `SHA256SUMS.txt` on the release page.
+  is signed with a self-generated key (not a Play Store key). Check downloads against `SHA256SUMS.txt` on the release page.
 - The updater downloads the installer over HTTPS from this repository's releases and runs
   it only if its SHA-256 matches the published checksum. That protects against a damaged
   download, not against a compromised release.

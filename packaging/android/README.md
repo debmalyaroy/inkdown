@@ -59,10 +59,23 @@ printing. Everything else is the same Rust code as on the desktop.
 
 ## Signing
 
-Each image build generates a new throwaway test key, so an APK from one build cannot be
-installed over an APK from another: Android asks to uninstall first. For real releases
-keep one keystore, and pass it to the build as `CARGO_APK_RELEASE_KEYSTORE` and
-`CARGO_APK_RELEASE_KEYSTORE_PASSWORD` (in CI: as repository secrets).
+Android only installs an update over an app signed with the same key, so releases must
+always use one keystore.
+
+- **Releases and CI** sign with the keystore held in the repository secrets
+  `ANDROID_KEYSTORE_BASE64` (the keystore file, base64) and `ANDROID_KEYSTORE_PASSWORD`.
+  Keep a copy of that keystore and its password somewhere safe: if it is lost, no future
+  version can update the installed app.
+- **A local build** without those uses a throwaway test key generated inside the image.
+  To sign locally with the real key:
+
+  ```sh
+  docker build --secret id=android_keystore,src=/path/inkdown-release.keystore \
+               --secret id=android_keystore_password,src=/path/password.txt \
+               -f packaging/android/Dockerfile -t inkdown-android .
+  ```
+
+The build prints the SHA-256 of the signing certificate, so you can see which key was used.
 
 ## Publishing to Google Play
 

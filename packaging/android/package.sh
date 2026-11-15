@@ -44,7 +44,15 @@ cd "$ROOT"
 
 # 4. align and sign
 "$TOOLS/zipalign" -f 4 "$WORK/base.apk" "$WORK/aligned.apk"
-"$TOOLS/apksigner" sign --ks "$CARGO_APK_RELEASE_KEYSTORE" --ks-pass "pass:$CARGO_APK_RELEASE_KEYSTORE_PASSWORD" --out "$OUT" "$WORK/aligned.apk"
-"$TOOLS/apksigner" verify "$OUT"
+#    ANDROID_KEYSTORE + ANDROID_KEYSTORE_PASSWORD_FILE name the release key; without them
+#    the throwaway test key of the build image is used.
+if [ -n "${ANDROID_KEYSTORE:-}" ]; then
+    echo "==> Signing with the release key"
+    "$TOOLS/apksigner" sign --ks "$ANDROID_KEYSTORE" --ks-pass "file:$ANDROID_KEYSTORE_PASSWORD_FILE" --out "$OUT" "$WORK/aligned.apk"
+else
+    echo "==> Signing with the test key (not for distribution)"
+    "$TOOLS/apksigner" sign --ks "$CARGO_APK_RELEASE_KEYSTORE" --ks-pass "pass:$CARGO_APK_RELEASE_KEYSTORE_PASSWORD" --out "$OUT" "$WORK/aligned.apk"
+fi
+"$TOOLS/apksigner" verify --print-certs "$OUT" | grep -E "SHA-256|DN:"
 rm -rf "$WORK"
 ls -la "$OUT"

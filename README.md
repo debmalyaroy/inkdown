@@ -15,7 +15,7 @@ The animation above is also available as a video: [inkdown-demo.mp4](docs/media/
 
 ## Download
 
-**Current release: [v1.0.2](https://github.com/debmalyaroy/inkdown/releases/latest)** ([release notes](docs/releases/v1.0.2.md), [all releases](https://github.com/debmalyaroy/inkdown/releases))
+**Current release: [v1.0.3](https://github.com/debmalyaroy/inkdown/releases/latest)** ([release notes](docs/releases/v1.0.3.md), [all releases](https://github.com/debmalyaroy/inkdown/releases))
 
 | Platform | Download | Status |
 | --- | --- | --- |
@@ -36,8 +36,8 @@ Checksums for every file are in `SHA256SUMS.txt` on the release page.
   not code-signed yet, so Windows SmartScreen shows a warning on first run: choose
   *More info > Run anyway*. For a silent install use `Inkdown-Setup.exe --quiet`.
 - **Android.** Download the APK on the phone and open it; allow installs from your browser
-  when asked. The APK is signed with a test key, so it cannot be updated in place by a
-  future Play Store build.
+  when asked. From 1.0.3 on, every release is signed with the same key, so new versions
+  install over the old one. Coming from 1.0.2 or earlier, uninstall once first.
 - **macOS.** Open the `.dmg` and drag Inkdown to Applications. The build is not notarised:
   the first time, right-click the app and choose *Open*, or run
   `xattr -dr com.apple.quarantine /Applications/Inkdown.app`.
@@ -166,7 +166,7 @@ platform nobody has used it on. That is why macOS and Linux are labelled *previe
 ## Known limits
 
 - No plugin API or language-server support yet.
-- Windows installer and macOS app are not code-signed; the Android APK uses a test key.
+- Windows installer and macOS app are not code-signed; the Android APK uses a self-generated key, not a Play Store one.
 - A file can be open in only one pane at a time; layouts have one or two columns.
 - PDF export needs Microsoft Edge, Chrome or Chromium installed.
 - Write mode shows raw markup for sub/superscript and emoji shortcodes outside the line
