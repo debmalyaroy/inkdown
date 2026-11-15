@@ -218,6 +218,7 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
     ("export_downloads", "Export: Save a Copy to Downloads", icons::FILE_DOWN),
     ("export_html", "Export: HTML…", icons::FILE_DOWN),
     ("export_pdf", "Export: PDF…", icons::FILE_DOWN),
+    ("export_pdf_browser", "Export: PDF through a Browser (Edge or Chrome)…", icons::FILE_DOWN),
     ("export_docx", "Export: Word (.docx)…", icons::FILE_DOWN),
     ("export_rtf", "Export: Rich Text (.rtf)…", icons::FILE_DOWN),
     ("export_copy_rich", "Export: Copy as Rich Text", icons::CLIPBOARD),

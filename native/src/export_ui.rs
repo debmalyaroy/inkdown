@@ -16,6 +16,8 @@ use crate::theme;
 
 pub enum Done {
     Toast(String),
+    /// A file was written: say so (on phones it is also copied to Downloads).
+    Saved(PathBuf, String),
     Open(String, String),
     Connected(Result<(), String>),
 }
@@ -200,7 +202,7 @@ pub fn html_page(markdown: &str, stem: &str, base: Option<&Path>, png: bool) -> 
 
 /// Reports a finished export. On a phone the file is also copied to the shared Downloads
 /// folder, because other apps cannot read Inkdown's own storage.
-fn exported(app: &mut InkApp, path: &Path, msg: &str) {
+pub fn exported(app: &mut InkApp, path: &Path, msg: &str) {
     #[cfg(any(target_os = "android", target_os = "ios"))]
     {
         let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
@@ -347,6 +349,19 @@ pub fn command(app: &mut InkApp, ctx: &egui::Context, name: &str) {
         }
         return;
     }
+    if name == "export_pdf" {
+        if let Some(d) = app.docs.get(app.active).filter(|d| !matches!(d.kind, Kind::Markdown | Kind::Asciidoc) && !d.kind.viewed_only()) {
+            let (text, title) = (d.buf.text(), d.name.clone());
+            if let Some(path) = save_as(app, &format!("{title}.pdf")) {
+                app.toast("Creating PDF…");
+                background(app, ctx, move || match crate::pdfout::text_to_pdf(&text, &title).and_then(|bytes| std::fs::write(&path, bytes).map_err(|e| format!("Could not save: {e}"))) {
+                    Ok(()) => Done::Saved(path, "PDF saved".into()),
+                    Err(e) => Done::Toast(e),
+                });
+            }
+            return;
+        }
+    }
     let Some((text, stem, base)) = markdown_of(app) else {
         app.toast("Open a Markdown or AsciiDoc document to export it.");
         return;
@@ -373,18 +388,29 @@ pub fn command(app: &mut InkApp, ctx: &egui::Context, name: &str) {
                 }
             }
         }
-        // phones: the system print dialog prints the page or saves it as a PDF
+        // written by Inkdown itself, the same on every platform: no browser is involved
+        "export_pdf" => {
+            if let Some(path) = save_as(app, &format!("{stem}.pdf")) {
+                app.toast("Creating PDF…");
+                background(app, ctx, move || match crate::pdfout::markdown_to_pdf(&text, &stem, base.as_deref()).and_then(|bytes| std::fs::write(&path, bytes).map_err(|e| format!("Could not save: {e}"))) {
+                    Ok(()) => Done::Saved(path, "PDF saved".into()),
+                    Err(e) => Done::Toast(e),
+                });
+            }
+        }
+        // phones: the system print dialog prints the page (and can save it as a PDF too)
         #[cfg(any(target_os = "android", target_os = "ios"))]
-        "export_pdf" | "print" => {
+        "print" | "export_pdf_browser" => {
             let (page, _) = html_page(&text, &stem, base.as_deref(), false);
             if !crate::mobile::print_html(&page, &stem) {
                 app.toast("Printing is not available on this device.");
             }
         }
+        // the page as a browser lays it out, for those who prefer that
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
-        "export_pdf" => {
+        "export_pdf_browser" => {
             if pdf_browser().is_none() {
-                app.toast("PDF export needs Microsoft Edge or Chrome. Use Export > HTML and print that instead.");
+                app.toast("This needs Microsoft Edge or Chrome. Export > PDF works without one.");
                 return;
             }
             if let Some(path) = save_as(app, &format!("{stem}.pdf")) {

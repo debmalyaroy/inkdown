@@ -342,7 +342,7 @@ fn rows_height(which: Sheet, app: &InkApp) -> f32 {
             let kind = app.docs.get(app.active).map(|d| d.kind);
             let own = have(&["export_downloads"]);
             if matches!(kind, Some(Kind::Markdown | Kind::Asciidoc)) {
-                (own + have(&["export_pdf", "export_html", "export_docx", "export_rtf", "export_copy_html", "export_copy_rich", "export_gdoc"])) * ROW
+                (own + 1.0 + have(&["export_pdf", "export_html", "export_docx", "export_rtf", "export_copy_html", "export_copy_rich", "export_gdoc"])) * ROW
             } else if matches!(kind, Some(Kind::Mermaid | Kind::Dot | Kind::Svg)) {
                 (own + 2.0) * ROW
             } else {
@@ -385,7 +385,8 @@ fn export_rows(ui: &mut Ui, app: &mut InkApp) {
     let diagram = matches!(kind, Some(Kind::Mermaid | Kind::Dot | Kind::Svg));
     command_row(ui, app, icons::FILE_DOWN, "Save a copy to Downloads", "export_downloads");
     if prose {
-        command_row(ui, app, icons::FILE_DOWN, "Print or save as PDF", "export_pdf");
+        command_row(ui, app, icons::FILE_DOWN, "PDF", "export_pdf");
+        command_row(ui, app, icons::FILE_DOWN, "Print", "print");
         command_row(ui, app, icons::GLOBE, "Web page (HTML)", "export_html");
         command_row(ui, app, icons::FILE_TEXT, "Word document", "export_docx");
         command_row(ui, app, icons::FILE_TEXT, "Rich text (RTF)", "export_rtf");

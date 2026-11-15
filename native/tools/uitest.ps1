@@ -80,6 +80,9 @@ function J([string]$file) { Get-Content "$o/$file.json" -Raw | ConvertFrom-Json 
 function Doc($j) { $j.docs[$j.active] }
 # The updater checks are about the Windows installer, and frame times mean nothing when
 # OpenGL is drawn in software, so those two groups run on Windows only.
+# An argument that may hold spaces: quoted for Windows, as it is elsewhere.
+function Arg([string]$value) { if ($windows) { "`"$value`"" } else { $value } }
+
 function Want([string]$group) {
     if (-not $windows -and $group -in @("update", "perf")) { return $false }
     -not $Only -or $Only -eq $group
@@ -428,7 +431,15 @@ cmd export_html
 cmd export_docx
 cmd export_rtf
 cmd export_pdf
-sleep 40000
+sleep 6000
+open $o/export/doc.pdf
+wait 30
+sleep 1500
+cmd show_find
+wait 5
+type Trip plan
+wait 8
+dump $o/x-pdf.json
 dump $o/x1.json
 quit
 "@
@@ -439,6 +450,8 @@ quit
         Check "Word export" ((Test-Path "$o/export/doc.docx") -and (Get-Item "$o/export/doc.docx").Length -gt 5000)
         Check "RTF export" ((Test-Path "$o/export/doc.rtf") -and (Get-Content "$o/export/doc.rtf" -TotalCount 1).StartsWith("{\rtf1"))
         Check "PDF export" ((Test-Path "$o/export/doc.pdf") -and (Get-Item "$o/export/doc.pdf").Length -gt 3000)
+        $x = Doc (J "x-pdf")
+        Check "the exported PDF is written without a browser and holds real text" ($x.kind -eq "PDF" -and $x.pdf_pages -ge 1 -and $x.pdf_matches -ge 1 -and (J "x-pdf").launched.Count -eq 0) "pages=$($x.pdf_pages) matches=$($x.pdf_matches) launched=$((J 'x-pdf').launched -join ',')"
     }
 }
 
@@ -493,7 +506,7 @@ crash
     $first = Start-Process -FilePath $exe -PassThru
     Start-Sleep 4
     Remove-Item Env:INKDOWN_AUTOMATION
-    $second = Start-Process -FilePath $exe -ArgumentList "`"$o/work/later.md`"" -PassThru
+    $second = Start-Process -FilePath $exe -ArgumentList (Arg "$o/work/later.md") -PassThru
     $handed = $second.WaitForExit(8000)
     if (-not $handed) { $second.Kill() }
     if (-not $first.WaitForExit(60000)) { $first.Kill() }
@@ -743,14 +756,16 @@ if (Want "logs") {
         $bmp = Open-Png "$o/lg1.png"
         # count strongly red, amber and green pixels in the text area
         $red = 0; $amber = 0; $green = 0
-        for ($x = 100; $x -lt 900; $x += 2) { for ($y = 100; $y -lt 300; $y += 1) {
+        $k = $bmp.Width / 1280.0 / 1.25   # this suite was written on a display with 1.25 pixels per point
+        for ($x = [int](100 * $k); $x -lt [int](900 * $k); $x += 2) { for ($y = [int](100 * $k); $y -lt [int](300 * $k); $y += 1) {
             $c = $bmp.GetPixel($x, $y)
-            if ($c.R -gt 200 -and $c.G -lt 130 -and $c.B -lt 140) { $red++ }
-            elseif ($c.R -gt 190 -and $c.G -gt 130 -and $c.G -lt 215 -and $c.B -lt 110) { $amber++ }
-            elseif ($c.G -gt 150 -and $c.R -lt 140 -and $c.B -lt 170) { $green++ }
+            if ($c.R -gt $c.G + 90 -and $c.R -gt $c.B + 70) { $red++ }
+            elseif ($c.R -gt $c.B + 90 -and $c.G -gt $c.B + 45 -and $c.R -gt $c.G + 15) { $amber++ }
+            elseif ($c.G -gt $c.R + 45 -and $c.G -gt $c.B + 25) { $green++ }
         } }
         $bmp.Dispose()
         Check "errors are red, warnings amber and INFO green" ($red -gt 150 -and $amber -gt 60 -and $green -gt 10) "red=$red amber=$amber green=$green"
+        Check "the first line of a stack trace is red like its entry" ($red -gt 420) "red=$red"
     }
 }
 
@@ -801,7 +816,7 @@ if (Want "web") {
             Set-Content "$o/web/app.log" "2026-11-15T10:00:00.000Z INFO  [main] started`n2026-11-15T10:00:01.000Z WARN  [main] slow`n" -NoNewline
             Set-Content "$o/web/README.md" "# Served`n`nFrom the test server.`n" -NoNewline
             Remove-Item "$o/port.txt", "$o/wb1.json" -ErrorAction SilentlyContinue
-            $srvArgs = @("`"$fixtures/range_server.py`"", "`"$o/web`"", "`"$o/port.txt`"")
+            $srvArgs = @((Arg "$fixtures/range_server.py"), (Arg "$o/web"), (Arg "$o/port.txt"))
             if ($mode -eq "plain") { $srvArgs += "--no-range" }
             $srv = if ($windows) { Start-Process -FilePath $py -ArgumentList $srvArgs -PassThru -WindowStyle Hidden } else { Start-Process -FilePath $py -ArgumentList $srvArgs -PassThru }
             $t0 = Get-Date

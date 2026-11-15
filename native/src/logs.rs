@@ -134,7 +134,13 @@ fn timestamp_len(line: &str) -> usize {
 
 /// True for lines that belong to the entry before them: stack frames, wrapped text.
 pub fn continues(line: &str) -> bool {
-    line.starts_with([' ', '\t']) && !line.trim().is_empty() || line.starts_with("Caused by") || line.starts_with("Traceback") || line.starts_with("...")
+    if line.starts_with([' ', '\t']) && !line.trim().is_empty() || line.starts_with("Caused by") || line.starts_with("Traceback") || line.starts_with("...") {
+        return true;
+    }
+    // the first line of a stack trace: `java.lang.IllegalStateException: boom`, `ValueError: bad`
+    let head = line.split([':', ' ']).next().unwrap_or("");
+    let named = head.ends_with("Exception") || head.ends_with("Error") || head.ends_with("Throwable") || head.ends_with("Panic");
+    named && head.len() > 5 && head.chars().all(|c| c.is_alphanumeric() || matches!(c, '.' | '_' | '$')) && head.chars().next().is_some_and(|c| c.is_alphabetic()) && timestamp_len(line) == 0
 }
 
 /// Numbers, quoted text, `key=` names and `[groups]` in the part of a line after its level.
@@ -288,6 +294,8 @@ mod tests {
         // a stack frame takes the colour of the entry it belongs to
         assert_eq!(spans("\tat x.y(Z.java:1)", Some(Level::Error)), vec![(17, TOK_LOG_ERROR)]);
         assert!(continues("\tat x.y(Z.java:1)") && continues("Caused by: java.io.IOException") && !continues("2026 INFO x"));
+        assert!(continues("java.lang.IllegalStateException: boom") && continues("ValueError: bad value") && continues("thread.MyError"));
+        assert!(!continues("Error") && !continues("ERROR something failed") && !continues("An Error: no") && !continues("12:00:01 java.lang.Error: x"));
     }
 
     #[test]

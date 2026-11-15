@@ -879,12 +879,14 @@ impl InkApp {
                 }
             }
             "show_find" | "show_replace" => {
+                let phone = crate::phone::active(ctx);
                 if let Some(d) = self.doc() {
                     if d.mode == Mode::Read || d.mode == Mode::Write {
                         if d.kind.viewed_only() {
                             return;
                         }
-                        d.mode = if d.kind.modes().contains(&Mode::Split) { Mode::Split } else { Mode::Code };
+                        // phones have no split view: find works on the source there
+                        d.mode = if d.kind.modes().contains(&Mode::Split) && !phone { Mode::Split } else { Mode::Code };
                     }
                     let s = d.buf.primary();
                     if !s.is_empty() && d.buf.line_of(s.start()) == d.buf.line_of(s.end()) {
@@ -1232,6 +1234,7 @@ impl InkApp {
         for done in self.integ.poll() {
             match done {
                 crate::export_ui::Done::Toast(t) => self.toast(t),
+                crate::export_ui::Done::Saved(path, msg) => crate::export_ui::exported(self, &path, &msg),
                 crate::export_ui::Done::Open(url, msg) => {
                     self.toast(msg);
                     if !url.is_empty() {

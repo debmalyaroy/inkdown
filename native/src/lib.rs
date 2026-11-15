@@ -11,6 +11,7 @@ pub mod home;
 pub mod live;
 pub mod logs;
 pub mod notes;
+pub mod pdfout;
 pub mod pdfview;
 pub mod phone;
 pub mod rx;

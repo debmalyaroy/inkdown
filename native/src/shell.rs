@@ -122,7 +122,7 @@ pub fn export_menu(ui: &mut Ui, app: &mut InkApp) {
     menu_item(ui, app, icons::FILE_DOWN, "Save a Copy to Downloads", "export_downloads");
     if prose {
         menu_item(ui, app, icons::GLOBE, "HTML…", "export_html");
-        menu_item(ui, app, icons::FILE_DOWN, if cfg!(any(target_os = "android", target_os = "ios")) { "Print or Save as PDF…" } else { "PDF…" }, "export_pdf");
+        menu_item(ui, app, icons::FILE_DOWN, "PDF…", "export_pdf");
         menu_item(ui, app, icons::FILE_TEXT, "Word (.docx)…", "export_docx");
         menu_item(ui, app, icons::FILE_TEXT, "Rich Text (.rtf)…", "export_rtf");
         ui.separator();
