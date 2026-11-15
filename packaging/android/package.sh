@@ -7,8 +7,10 @@
 # Needs ANDROID_HOME with platform 34 and build-tools 34.0.0, a JDK, zip and unzip.
 # Signs with $CARGO_APK_RELEASE_KEYSTORE / $CARGO_APK_RELEASE_KEYSTORE_PASSWORD.
 set -eu
-IN=$1
-OUT=$2
+# absolute paths: the script changes directory while it works
+IN=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
+mkdir -p "$(dirname "$2")"
+OUT=$(cd "$(dirname "$2")" && pwd)/$(basename "$2")
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
 TOOLS="$ANDROID_HOME/build-tools/34.0.0"
