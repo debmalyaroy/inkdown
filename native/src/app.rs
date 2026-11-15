@@ -544,6 +544,17 @@ impl InkApp {
             }
         }
         let (name, arg) = cmd.split_once(' ').map(|(a, b)| (a, b.trim())).unwrap_or((cmd, ""));
+        // A menu takes the keyboard focus. Clipboard commands act on the focused editor, so
+        // give the focus back to the document first.
+        if matches!(name, "cut" | "copy" | "paste" | "undo" | "redo" | "select_all") {
+            if let Some(d) = self.docs.get_mut(self.active) {
+                d.ed.focus = true;
+                if let Some(r) = &mut d.view.rich {
+                    r.focus = true;
+                }
+            }
+            ctx.request_repaint();
+        }
         // Markdown niceties shared by Code, Split and Write modes
         if let Some(d) = self.docs.get_mut(self.active) {
             if d.kind == Kind::Markdown && !d.read_only {
