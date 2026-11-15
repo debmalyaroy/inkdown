@@ -25,7 +25,8 @@ jobs:
         include:
           - { name: Windows, os: windows-latest }
           - { name: macOS, os: macos-latest }
-          - { name: Linux, os: ubuntu-latest }
+          # the oldest Ubuntu still supported, like the release: what is built here runs on newer ones
+          - { name: Linux, os: ubuntu-22.04 }
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -44,6 +45,27 @@ jobs:
         working-directory: native
         run: cargo build --locked
       # the Linux build, for the UI checks below and for testing by hand
+      # macOS: the same scripted UI checks that test the Windows build, on the runner's own display
+      - name: UI checks (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          python3 -m pip install --quiet --user --break-system-packages pillow || python3 -m pip install --quiet --user pillow
+          pwsh -NoProfile -File native/tools/uitest.ps1 -Exe native/target/debug/inkdown -Out "$RUNNER_TEMP/uitest"
+      - name: Keep the macOS screenshots and state dumps
+        if: always() && runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-uitest-output
+          path: |
+            ${{ runner.temp }}/uitest/*.png
+            ${{ runner.temp }}/uitest/*.json
+            ${{ runner.temp }}/uitest/*.txt
+          retention-days: 7
+          if-no-files-found: ignore
+      - name: Strip the Linux build
+        if: runner.os == 'Linux'
+        run: strip --strip-debug native/target/debug/inkdown
       - name: Keep the Linux build
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
@@ -68,8 +90,8 @@ jobs:
         run: |
           mkdir -p dist/linux-uitest
           docker run --rm --shm-size=512m -v "$PWD:/src:ro" -v "$PWD/dist/linux:/app:ro" -v "$PWD/dist/linux-uitest:/out" inkdown-linux-uitest
-      - name: Keep screenshots and state dumps when a check fails
-        if: failure()
+      - name: Keep the Linux screenshots and state dumps
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: linux-uitest-output
