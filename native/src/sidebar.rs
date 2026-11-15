@@ -357,14 +357,23 @@ pub fn drawer(ctx: &egui::Context, app: &mut InkApp) {
     let screen = ctx.content_rect();
     let w = (screen.width() * 0.82).min(320.0);
     ctx.layer_painter(egui::LayerId::new(egui::Order::Middle, Id::new("drawer-dim"))).rect_filled(screen, 0, egui::Color32::from_black_alpha(90));
-    let resp = egui::Area::new(Id::new("ink-drawer")).order(egui::Order::Foreground).fixed_pos(screen.min).show(ctx, |ui| {
+    // stay clear of the system bars on a phone
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    let (top, bottom) = {
+        let (t, b) = crate::mobile::insets_px();
+        (t / ctx.pixels_per_point(), b / ctx.pixels_per_point())
+    };
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    let (top, bottom) = (0.0, 0.0);
+    let resp = egui::Area::new(Id::new("ink-drawer")).order(egui::Order::Foreground).fixed_pos(screen.min + egui::vec2(0.0, top)).show(ctx, |ui| {
         egui::Frame::new().fill(pal.chrome).show(ui, |ui| {
             ui.set_width(w);
-            ui.set_height(screen.height());
+            ui.set_height(screen.height() - top - bottom);
             contents(ui, app);
         });
     });
-    if ctx.input(|i| i.pointer.any_pressed()) && !resp.response.contains_pointer() {
+    let dismissed = ctx.input(|i| (i.pointer.any_pressed() && !resp.response.contains_pointer()) || i.key_pressed(egui::Key::Escape));
+    if dismissed {
         app.set.show_sidebar = false;
     }
 }

@@ -210,7 +210,7 @@ pub fn markdown(ui: &mut Ui, view: &mut MdView, id: Id, text: impl FnOnce() -> S
         let (vis0, vis1) = (viewport.min.y - top_pad - page_pad - 200.0, viewport.max.y - top_pad - page_pad + 200.0);
         let first = view.tops.partition_point(|t| t.y + t.laid.height < vis0);
         let pointer = ui.input(|i| i.pointer.hover_pos());
-        let touch = ui.input(|i| i.any_touches());
+        let touch = crate::platform::touch(ui.ctx());
         for (ti, top) in view.tops.iter().enumerate().skip(first) {
             if top.y > vis1 {
                 break;
@@ -235,7 +235,12 @@ pub fn markdown(ui: &mut Ui, view: &mut MdView, id: Id, text: impl FnOnce() -> S
                         let gp = *pos + off;
                         let rect = galley.rect.translate(gp.to_vec2());
                         let resp = ui.interact(rect, id.with((top.hash, di, ti)), if touch { Sense::click() } else { Sense::click_and_drag() });
-                        egui::text_selection::LabelSelectionState::label_text_selection(ui, &resp, gp, galley.clone(), pal.doc_text, Stroke::NONE);
+                        if touch {
+                            // a finger drag scrolls; selecting text by dragging would fight it
+                            ui.painter().galley(gp, galley.clone(), pal.doc_text);
+                        } else {
+                            egui::text_selection::LabelSelectionState::label_text_selection(ui, &resp, gp, galley.clone(), pal.doc_text, Stroke::NONE);
+                        }
                         if !links.is_empty() {
                             if let Some(p) = pointer.filter(|p| rect.contains(*p)) {
                                 let local = p - gp;

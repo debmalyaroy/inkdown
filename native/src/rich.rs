@@ -918,15 +918,18 @@ pub fn show(ui: &mut Ui, app: &mut InkApp) {
             let doc = vec2(col_x, origin_y + top_pad + page_pad);
             let area_rect = Rect::from_min_size(pos2(full.min.x, origin_y), vec2(full.width(), content_h));
             // touch drags belong to the scroll area; with a mouse they select text
-            let touch = ui.input(|i| i.any_touches());
+            let touch = crate::platform::touch(ui.ctx());
             let resp = ui.interact(area_rect, id, if touch { Sense::click() } else { Sense::click_and_drag() });
 
             // pointer
             let pointer = ui.input(|i| i.pointer.interact_pos());
             let (pressed, down, mods) = ui.input(|i| (i.pointer.primary_pressed(), i.pointer.primary_down(), i.modifiers));
+            // with a finger the caret moves on a tap (press and release in place), so that a
+            // drag which starts on the text scrolls the page instead of selecting
+            let place = if touch { resp.clicked() } else { pressed && resp.hovered() };
             if let Some(p) = pointer {
                 let local = (p - doc).to_vec2();
-                if pressed && resp.hovered() && !egui::Popup::is_any_open(ui.ctx()) {
+                if place && !egui::Popup::is_any_open(ui.ctx()) {
                     ui.memory_mut(|m| m.request_focus(id));
                     let li = rich.line_at_y(local.y);
                     let l = rich.lines.get(li).cloned();
@@ -951,7 +954,7 @@ pub fn show(ui: &mut Ui, app: &mut InkApp) {
                         } else {
                             buf.set_caret(pos);
                         }
-                        rich.drag = Some((buf.primary().anchor, clicks));
+                        rich.drag = if touch { None } else { Some((buf.primary().anchor, clicks)) };
                         rich.blink = now;
                         rich.goal_x = None;
                     }

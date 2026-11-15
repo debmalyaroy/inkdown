@@ -156,6 +156,7 @@ impl Automation {
                 app.frame_max = 0.0;
                 app.frame_sum = 0.0;
                 app.frame_count = 0;
+                app.total_sum = 0.0;
             }
             "quit" => {
                 app.quit = true;
@@ -206,7 +207,15 @@ pub fn dump(app: &InkApp, ctx: &egui::Context) -> serde_json::Value {
         "docs": docs,
         "update": app.updater.label(),
         "update_version": app.updater.available().map(|r| r.version.clone()),
-        "dialog": app.dialog.is_some(),
+        "dialog_kind": app.dialog.as_ref().map(|d| format!("{d:?}").split(['(', ' ', '{']).next().unwrap_or("").to_string()),
+        "launched": crate::platform::launched(),
+        "bottom": format!("{:?}", app.bottom),
+        "split": app.split.is_some(),
+        "minimap": app.set.minimap,
+        "word_wrap": app.set.word_wrap,
+        "font_size": app.set.font_size,
+        "status_bar": app.set.show_status_bar,
+        "recording": app.macro_rec.is_some(),
         "theme": app.pal.id,
         "auto_save": app.set.auto_save,
         "line_numbers": app.set.line_numbers,
@@ -218,6 +227,8 @@ pub fn dump(app: &InkApp, ctx: &egui::Context) -> serde_json::Value {
         "frame_ms": app.frame_ms,
         "frame_avg_ms": if app.frame_count > 0 { app.frame_sum / app.frame_count as f32 } else { 0.0 },
         "frame_max_ms": app.frame_max,
+        "atlas_resets": app.atlas_resets,
+        "frame_total_avg_ms": if app.frame_count > 0 { app.total_sum / app.frame_count as f32 } else { 0.0 },
         "frames": app.frame_count,
         "slow": app.slow,
         "first_frame_ms": app.first_frame_ms,

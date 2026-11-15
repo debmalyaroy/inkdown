@@ -414,6 +414,271 @@ quit
     }
 }
 
+# ------------------------------------------------------------------ menus
+# Every item of the main menu, its submenus and the toolbar, by command and by click.
+if (Want "menus") {
+    Write-Host "menus"
+    Set-Content "$Out\work\menu.md" "# Menu test`n`nSome ``code`` and a list:`n`n1. one`n1. two`n`n| a | b |`n|---|---|`n| 1 | 22222 |`n`n## Section`n`nText.`n" -NoNewline
+    Set-Content "$Out\work\menu2.txt" "second`n" -NoNewline
+    Set-Content "$Out\work\flow.mmd" "flowchart LR`n  A --> B`n" -NoNewline
+    $env:INKDOWN_DIALOG_OPEN = "$Out\work\menu2.txt"
+    $env:INKDOWN_DIALOG_FOLDER = "$Out\work\proj"
+    $env:INKDOWN_UPDATE_URL = "http://127.0.0.1:9/none.json"   # nothing listens here: the check fails at once
+    $s = @"
+wait 10
+open $w/menu.md
+wait 15
+dump $o/mn0.json
+cmd new_file
+wait 4
+dump $o/mn1.json
+cmd close
+wait 3
+cmd new_from_template
+wait 5
+dump $o/mn2.json
+key enter
+wait 6
+dump $o/mn3.json
+cmd close
+wait 3
+cmd open_file
+wait 8
+dump $o/mn4.json
+cmd close
+wait 3
+cmd open_folder
+wait 20
+dump $o/mn5.json
+cmd close_folder
+cmd toggle_sidebar
+wait 3
+cmd open_recent
+wait 5
+dump $o/mn6.json
+key escape
+cmd mode code
+wait 5
+key ctrl+end
+type x
+cmd save_as
+wait 8
+dump $o/mn7.json
+cmd export_copy_html
+wait 4
+dump $o/mn8.json
+cmd export_copy_rich
+wait 4
+dump $o/mn9.json
+cmd export_gdoc
+wait 6
+dump $o/mn10.json
+key escape
+cmd tool_word_count
+wait 4
+dump $o/mn11.json
+key escape
+cmd tool_format_tables
+wait 4
+dump $o/mn12.json
+cmd tool_renumber
+wait 4
+dump $o/mn13.json
+key ctrl+home
+cmd tool_toc
+wait 4
+dump $o/mn14.json
+key ctrl+end
+type \nhello world
+key shift+home
+cmd tool_base64_encode
+wait 3
+dump $o/mn15.json
+key shift+home
+cmd tool_base64_decode
+wait 3
+dump $o/mn16.json
+key shift+home
+cmd tool_url_encode
+wait 3
+dump $o/mn17.json
+key shift+home
+cmd tool_url_decode
+wait 3
+dump $o/mn18.json
+key end
+type \n
+cmd tool_insert_date
+type \n
+cmd tool_insert_uuid
+wait 3
+dump $o/mn19.json
+cmd tool_set_default
+wait 3
+dump $o/mn20.json
+cmd select_theme
+wait 5
+dump $o/mn21.json
+key escape
+cmd increase_font_size
+cmd increase_font_size
+cmd decrease_font_size
+cmd toggle_line_numbers
+cmd toggle_minimap
+cmd toggle_word_wrap
+wait 3
+dump $o/mn22.json
+cmd toggle_line_numbers
+cmd toggle_minimap
+cmd toggle_word_wrap
+cmd reset_font_size
+cmd open_settings
+wait 8
+dump $o/mn23.json
+cmd close
+cmd open_keybindings
+wait 8
+dump $o/mn24.json
+cmd close
+cmd open_snippets
+wait 8
+dump $o/mn25.json
+cmd close
+cmd integrations
+wait 4
+dump $o/mn26.json
+key escape
+cmd command_palette
+wait 4
+dump $o/mn27.json
+key escape
+cmd show_shortcuts
+wait 4
+dump $o/mn28.json
+key escape
+cmd about
+wait 4
+dump $o/mn29.json
+key escape
+cmd help_docs
+cmd help_release_notes
+cmd help_report_issue
+cmd new_window
+cmd reveal_in_explorer
+cmd print
+wait 4
+dump $o/mn30.json
+cmd check_for_updates
+sleep 2500
+wait 3
+dump $o/mn31.json
+key escape
+cmd welcome
+wait 15
+dump $o/mn32.json
+cmd close
+open $w/flow.mmd
+wait 20
+cmd export_svg
+cmd export_png
+sleep 2500
+wait 3
+dump $o/mn33.json
+quit
+"@
+    if (Run "menus" $s) {
+        $n0 = (J "mn0").docs.Count
+        Check "File > New Document" ((J "mn1").docs.Count -eq $n0 + 1 -and (Doc (J "mn1")).name -like "Untitled-*")
+        Check "File > New from Template lists templates" ((J "mn2").picker.items.Count -ge 3) "$((J 'mn2').picker.items -join ';')"
+        Check "choosing a template creates a filled document" ((J "mn3").docs.Count -eq $n0 + 1 -and (Doc (J "mn3")).chars -gt 20) "chars=$((Doc (J 'mn3')).chars)"
+        Check "File > Open opens the chosen file" ((Doc (J "mn4")).name -eq "menu2.txt")
+        Check "File > Open Folder shows the folder" ((J "mn5").folder -like "*proj" -and (J "mn5").sidebar)
+        Check "File > Open Recent lists recent files" ((J "mn6").picker.items.Count -ge 1 -and (((J "mn6").picker.items -join ";") -like "*menu*")) "$((J 'mn6').picker.items -join ';')"
+        Check "File > Save As writes the file" ((Test-Path "$Out\export\menu.md") -and -not (Doc (J "mn7")).dirty) "$((Doc (J 'mn7')).path)"
+        Check "Export > Copy as HTML" (((J "mn8").toasts -join ";") -like "*opied*") "$((J 'mn8').toasts -join ';')"
+        Check "Export > Copy as Rich Text" (((J "mn9").toasts -join ";") -like "*opied*") "$((J 'mn9').toasts -join ';')"
+        Check "Export > Google Docs asks to connect first" ((J "mn10").dialog -or (((J "mn10").toasts -join ";") -match "Google|connect|Integrations")) "$((J 'mn10').dialog_kind) $((J 'mn10').toasts -join ';')"
+        Check "Tools > Word Count reports" ((J "mn11").dialog -or (((J "mn11").toasts -join ";") -match "word")) "$((J 'mn11').dialog_kind) $((J 'mn11').toasts -join ';')"
+        Check "Tools > Align Markdown Tables" ((Doc (J "mn12")).text.Contains("| a   | b     |"))
+        Check "Tools > Renumber Ordered Lists" ((Doc (J "mn13")).text.Contains("1. one`n2. two"))
+        Check "Tools > Insert Table of Contents" ((Doc (J "mn14")).text -match "\[Section\]\(#section\)")
+        Check "Tools > Base64 Encode" ((Doc (J "mn15")).text.TrimEnd().EndsWith("aGVsbG8gd29ybGQ="))
+        Check "Tools > Base64 Decode" ((Doc (J "mn16")).text.TrimEnd().EndsWith("hello world"))
+        Check "Tools > URL Encode" ((Doc (J "mn17")).text.TrimEnd().EndsWith("hello%20world"))
+        Check "Tools > URL Decode" ((Doc (J "mn18")).text.TrimEnd().EndsWith("hello world"))
+        $t = (Doc (J "mn19")).text
+        Check "Tools > Insert Date and Insert UUID" ($t -match "\d{4}-\d{2}-\d{2}" -and $t -match "[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
+        Check "Tools > Make Inkdown the Default opens Windows Settings" (((J "mn20").launched -join ";") -like "*ms-settings:defaultapps*") "$((J 'mn20').launched -join ';')"
+        Check "Preferences > Theme lists the themes" ((J "mn21").picker.items.Count -ge 9) "$((J 'mn21').picker.items.Count)"
+        $j = J "mn22"; $b = J "mn0"
+        Check "Preferences > Larger / Smaller Text" ($j.font_size -eq $b.font_size + 1) "$($j.font_size)"
+        Check "Preferences > Line Numbers, Minimap, Word Wrap toggle" ($j.line_numbers -ne $b.line_numbers -and $j.minimap -ne $b.minimap -and $j.word_wrap -ne $b.word_wrap) "$($j.line_numbers) $($j.minimap) $($j.word_wrap)"
+        Check "Preferences > Settings opens settings.json" ((Doc (J "mn23")).name -eq "settings.json" -and (Doc (J "mn23")).text.Contains('"theme"'))
+        Check "Preferences > Key Bindings opens keybindings.json" ((Doc (J "mn24")).name -eq "keybindings.json")
+        Check "Preferences > Snippets opens snippets.json" ((Doc (J "mn25")).name -eq "snippets.json")
+        Check "Integrations opens its dialog" ((J "mn26").dialog_kind -eq "Integrations") "$((J 'mn26').dialog_kind)"
+        Check "Command Palette opens" ((J "mn27").picker.items.Count -ge 10)
+        Check "Help > Keyboard Shortcuts" ((J "mn28").dialog_kind -eq "Shortcuts") "$((J 'mn28').dialog_kind)"
+        Check "Help > About Inkdown" ((J "mn29").dialog_kind -eq "About") "$((J 'mn29').dialog_kind)"
+        $l = (J "mn30").launched -join ";"
+        Check "Help > Documentation, Release Notes, Report an Issue open their pages" ($l -like "*inkdown#readme*" -and $l -like "*/releases/latest*" -and $l -like "*/issues*") $l
+        Check "New Window, Show in File Manager and Print reach the system" ($l -like "*new-window*" -and $l -like "*reveal:*" -and $l -like "*-print.html*") $l
+        Check "Help > Check for Updates opens the update dialog" ((J "mn31").dialog_kind -eq "Update" -and (J "mn31").update -eq "failed") "$((J 'mn31').dialog_kind) $((J 'mn31').update)"
+        Check "Help > Welcome Tour" ((Doc (J "mn32")).name -eq "Welcome.md")
+        Check "Export > Diagram as SVG and PNG" ((Test-Path "$Out\export\flow.svg") -and (Test-Path "$Out\export\flow.png") -and (Get-Item "$Out\export\flow.png").Length -gt 500) "$((J 'mn33').toasts -join ';')"
+    }
+    # the toolbar and the menus themselves, by clicking them
+    $s = @"
+wait 10
+open $w/doc.md
+wait 15
+click 637 23
+wait 6
+dump $o/tb1.json
+click 714 23
+wait 6
+dump $o/tb2.json
+click 792 23
+wait 6
+dump $o/tb3.json
+click 558 23
+wait 6
+dump $o/tb4.json
+click 61 23
+wait 6
+dump $o/tb5.json
+click 61 23
+wait 4
+click 166 23
+wait 4
+dump $o/tb6.json
+click 166 23
+click 1138 23
+wait 6
+dump $o/tb7.json
+key escape
+click 1254 23
+wait 6
+dump $o/tb8.json
+key escape
+click 22 23
+wait 8
+shot $o/menu-open.png
+dump $o/tb9.json
+key escape
+quit
+"@
+    if (Run "toolbar" $s) {
+        Check "toolbar: Write, Split, Code and Read buttons" ((Doc (J "tb1")).mode -eq "write" -and (Doc (J "tb2")).mode -eq "split" -and (Doc (J "tb3")).mode -eq "code" -and (Doc (J "tb4")).mode -eq "read") "$((Doc (J 'tb1')).mode) $((Doc (J 'tb2')).mode) $((Doc (J 'tb3')).mode) $((Doc (J 'tb4')).mode)"
+        Check "toolbar: sidebar button" ((J "tb5").sidebar)
+        Check "toolbar: AutoSave switch" ((J "tb6").auto_save)
+        Check "toolbar: search button opens Goto Anything" ($null -ne (J "tb7").picker)
+        Check "toolbar: theme button" ((J "tb8").theme -ne (J "tb1").theme -or $null -ne (J "tb8").picker) "$((J 'tb8').theme)"
+        Check "menu button opens the main menu" ((Test-Path "$Out\menu-open.png"))
+    }
+    Remove-Item Env:INKDOWN_DIALOG_OPEN, Env:INKDOWN_DIALOG_FOLDER, Env:INKDOWN_UPDATE_URL -ErrorAction SilentlyContinue
+}
+
 # ----------------------------------------------------------------- update
 # A tiny local web server stands in for GitHub Releases (127.0.0.1 only, random port).
 if (Want "update") {

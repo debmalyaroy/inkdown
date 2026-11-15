@@ -25,6 +25,7 @@ pub enum MacroStep {
     Text(String),
 }
 
+#[derive(Debug)]
 pub enum Dialog {
     /// Unsaved changes in the tab at this index.
     ConfirmClose(usize),
@@ -40,7 +41,7 @@ pub enum Dialog {
     ReloadChanged(usize),
 }
 
-#[derive(PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Bottom {
     None,
     Search,
@@ -96,6 +97,16 @@ pub struct InkApp {
     pub first_frame_ms: Option<f32>,
     pub quit: bool,
     pub updater: crate::update::Updater,
+    /// Sum of whole-frame times (build, tessellate, paint) reported by the windowing layer.
+    pub total_sum: f32,
+    /// Times the glyph atlas was thrown away and every cached layout rebuilt.
+    pub atlas_resets: u32,
+    /// Document waiting for the answer of the phone's "save as" picker.
+    pending_save: Option<u64>,
+    /// When the phone glue was last asked for arrived documents.
+    mobile_polled: f64,
+    /// Input events to deliver at the start of the next frame (paste on phones).
+    inject: Vec<egui::Event>,
     /// Glyph atlas state last frame; cached layouts must be rebuilt when egui resets the atlas.
     atlas: (f32, Option<egui::epaint::text::TextOptions>, f32),
 }
@@ -157,6 +168,11 @@ impl InkApp {
             started,
             ime_keep: None,
             updater: Default::default(),
+            inject: Vec::new(),
+            pending_save: None,
+            mobile_polled: 0.0,
+            total_sum: 0.0,
+            atlas_resets: 0,
             first_frame_ms: None,
             quit: false,
             atlas: (0.0, None, 0.0),
@@ -262,6 +278,46 @@ impl InkApp {
         list
     }
 
+    /// Phones: documents picked in the system file picker or sent by another app, and the
+    /// answer of the "save as" picker.
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    fn poll_mobile(&mut self, ctx: &egui::Context, now: f64) {
+        if now - self.mobile_polled < 0.25 {
+            ctx.request_repaint_after(std::time::Duration::from_millis(250));
+            return;
+        }
+        self.mobile_polled = now;
+        ctx.request_repaint_after(std::time::Duration::from_millis(250));
+        while let Some(path) = crate::mobile::take_opened() {
+            self.open_path(&path);
+        }
+        let Some(id) = self.pending_save else { return };
+        let Some(answer) = crate::mobile::take_saved() else { return };
+        self.pending_save = None;
+        let Some(place) = answer else { return };
+        let Some(ix) = self.docs.iter().position(|d| d.id == id) else { return };
+        // keep a working copy in Inkdown's own folder, tied to the chosen document
+        if self.docs[ix].path.is_none() {
+            let dir = crate::mobile::documents_dir();
+            let _ = std::fs::create_dir_all(&dir);
+            let name = self.docs[ix].name.clone();
+            let set = self.set.clone();
+            self.docs[ix].set_path(dir.join(name), &set);
+            self.docs[ix].scratch = false;
+        }
+        let set = self.set.clone();
+        let text = self.docs[ix].text_for_disk(&set);
+        let path = self.docs[ix].path.clone().unwrap_or_default();
+        match crate::mobile::save_to(&place, &path, text.as_bytes()) {
+            Ok(name) => {
+                // the working copy follows; from now on Save writes to both
+                let _ = self.docs[ix].save(&set);
+                self.toast(format!("Saved as {name}"));
+            }
+            Err(e) => self.toast(e),
+        }
+    }
+
     // ------------------------------------------------------------ saving
 
     pub fn save_doc(&mut self, ix: usize, force_dialog: bool) -> bool {
@@ -270,10 +326,18 @@ impl InkApp {
             self.toast("This file is read-only.");
             return false;
         }
+        let mut named = false;
+        // phones: "Save As" goes through the system picker; the answer arrives in `tick`
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        if force_dialog && crate::mobile::pick_save(&d.name) {
+            self.pending_save = Some(d.id);
+            return false;
+        }
         if d.path.is_none() || force_dialog {
             let Some(p) = crate::platform::save_dialog(&d.name, d.dir().or_else(|| self.sidebar.folder.clone())) else { return false };
             d.set_path(p, &self.set);
             d.scratch = false;
+            named = true;
         }
         let set = self.set.clone();
         let d = &mut self.docs[ix];
@@ -282,6 +346,11 @@ impl InkApp {
                 if let Some(p) = d.path.clone() {
                     self.set.add_recent(&p);
                     self.after_save(&p);
+                    // a phone has no save dialog, so say where the file went
+                    if cfg!(any(target_os = "android", target_os = "ios")) {
+                        let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                        self.toast(if named { format!("Saved in Inkdown's documents as {name}") } else { format!("Saved {name}") });
+                    }
                 }
                 true
             }
@@ -504,6 +573,16 @@ impl InkApp {
                 self.untitled += 1;
                 self.new_file(Some(format!("untitled-{}.txt", self.untitled)), "");
             }
+            // a phone has no file dialog Inkdown can call: show its own documents instead
+            #[cfg(any(target_os = "android", target_os = "ios"))]
+            "open_file" => {
+                // the system file picker; the choice arrives in `tick`
+                if !crate::mobile::pick_file() {
+                    self.set.show_sidebar = true;
+                    self.toast("These are the documents kept in Inkdown. To open a file from elsewhere, choose \"Open with Inkdown\" in your Files app.");
+                }
+            }
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
             "open_file" => {
                 let dir = self.doc().and_then(|d| d.dir()).or_else(|| self.sidebar.folder.clone());
                 for f in crate::platform::open_dialog(dir) {
@@ -731,6 +810,16 @@ impl InkApp {
             "integrations" => self.dialog = Some(Dialog::Integrations),
             "cut" => ctx.send_viewport_cmd(egui::ViewportCommand::RequestCut),
             "copy" => ctx.send_viewport_cmd(egui::ViewportCommand::RequestCopy),
+            // phones: read the system clipboard ourselves, the windowing layer cannot
+            #[cfg(any(target_os = "android", target_os = "ios"))]
+            "paste" => match crate::mobile::clipboard_get() {
+                Some(text) if !text.is_empty() => {
+                    self.inject.push(egui::Event::Paste(text));
+                    ctx.request_repaint();
+                }
+                _ => self.toast("The clipboard is empty"),
+            },
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
             "paste" => ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste),
             "copy_path" => {
                 if let Some(p) = self.doc().and_then(|d| d.path.clone()) {
@@ -835,6 +924,8 @@ impl InkApp {
 
     fn tick(&mut self, ctx: &egui::Context) {
         let now = ctx.input(|i| i.time);
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        self.poll_mobile(ctx, now);
         // updates: one quiet check a day, a few seconds after start-up
         if now > 3.0 {
             self.updater.auto_check(ctx, self.set.check_for_updates);
@@ -845,7 +936,11 @@ impl InkApp {
             self.dialog = Some(Dialog::Update);
         }
         // follow the OS theme
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         let sys = ctx.system_theme().map(|t| t == egui::Theme::Dark).unwrap_or(self.system_dark);
+        // the windowing layer does not report the theme on phones; ask the system directly
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        let sys = crate::mobile::system_dark(now).or_else(|| ctx.system_theme().map(|t| t == egui::Theme::Dark)).unwrap_or(self.system_dark);
         if sys != self.system_dark {
             self.system_dark = sys;
             if theme::PALETTES.iter().all(|p| p.id != self.set.theme) {
@@ -859,6 +954,7 @@ impl InkApp {
         let (ratio, opts) = ctx.fonts_mut(|f| (f.font_atlas_fill_ratio(), *f.options()));
         let ppp = ctx.pixels_per_point();
         if ratio + 1e-4 < self.atlas.0 || self.atlas.1 != Some(opts) || (ppp - self.atlas.2).abs() > 1e-3 {
+            self.atlas_resets += 1;
             self.pal_epoch += 1;
             theme::apply_if_changed(ctx, &self.pal, self.pal_epoch);
         }
@@ -1334,12 +1430,23 @@ fn strip_unc(p: PathBuf) -> PathBuf {
 
 impl eframe::App for InkApp {
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        raw.events.append(&mut self.inject);
+        // The Back button or gesture of a phone closes whatever is open, like Esc on a keyboard.
+        for ev in &mut raw.events {
+            if let egui::Event::Key { key, .. } = ev {
+                if *key == egui::Key::BrowserBack {
+                    *key = egui::Key::Escape;
+                }
+            }
+        }
         if let Some(a) = &mut self.automation {
             a.inject(ctx, raw);
         }
     }
 
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+        let cpu_ms = _frame.info().cpu_usage.unwrap_or(0.0) * 1000.0;
+        self.total_sum += cpu_ms;
         let ctx = ui.ctx().clone();
         self.assets.poll(&ctx);
         if let Some(mut a) = self.automation.take() {
@@ -1407,6 +1514,22 @@ impl eframe::App for InkApp {
                 }
             }
         }
+        // Commands queued by a button run at the start of the next frame, and several views
+        // settle one frame after the input that changed them. With a mouse there is always
+        // another frame (the pointer keeps moving); after a finger tap there is not, so a
+        // tapped menu item appeared to do nothing until the next touch. Ask for the frame.
+        // phones: text copied in Inkdown goes to the system clipboard for other apps
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        {
+            let copied: Vec<String> = ctx.output(|o| o.commands.iter().filter_map(|c| if let egui::OutputCommand::CopyText(t) = c { Some(t.clone()) } else { None }).collect());
+            if let Some(text) = copied.last() {
+                crate::mobile::clipboard_set(text);
+            }
+        }
+        let had_input = ctx.input(|i| !i.events.is_empty() || i.pointer.any_released() || i.pointer.any_pressed());
+        if !self.pending.is_empty() || had_input {
+            ctx.request_repaint();
+        }
         // An editor can lose focus for a single frame during a click. Without this the phone
         // keyboard gets "hide" and "show" back to back and stays hidden.
         match ctx.output(|o| o.ime.clone()) {
@@ -1422,6 +1545,35 @@ impl eframe::App for InkApp {
             },
         }
         self.frame_ms = t0.elapsed().as_secs_f32() * 1000.0;
+        // on a phone, a line in the system log every 120 frames tells how smooth things are:
+        // time spent building a frame, and the gap between frames while they follow closely
+        #[cfg(target_os = "android")]
+        {
+            use std::sync::Mutex;
+            static STATS: Mutex<Option<(std::time::Instant, u32, f32, f32, u32, f32, f32)>> = Mutex::new(None);
+            static CPU: Mutex<(f32, f32)> = Mutex::new((0.0, 0.0));
+            let mut cpu = CPU.lock().unwrap();
+            cpu.0 += cpu_ms;
+            cpu.1 = cpu.1.max(cpu_ms);
+            let mut s = STATS.lock().unwrap();
+            let now_i = std::time::Instant::now();
+            let st = s.get_or_insert((now_i, 0, 0.0, 0.0, 0, 0.0, 0.0));
+            let gap = now_i.duration_since(st.0).as_secs_f32() * 1000.0;
+            st.0 = now_i;
+            st.1 += 1;
+            st.2 += self.frame_ms;
+            st.3 = st.3.max(self.frame_ms);
+            if gap < 120.0 {
+                st.4 += 1;
+                st.5 += gap;
+                st.6 = st.6.max(gap);
+            }
+            if st.1 >= 120 {
+                crate::mobile::log(&format!("frames: build avg {:.1} ms, max {:.1} ms; build+paint avg {:.1} ms, max {:.1} ms; gap avg {:.1} ms, max {:.1} ms over {} frames; atlas {:.0}% full, {} resets, scale {:.2}", st.2 / st.1 as f32, st.3, cpu.0 / st.1 as f32, cpu.1, if st.4 > 0 { st.5 / st.4 as f32 } else { 0.0 }, st.6, st.4, ctx.fonts(|f| f.font_atlas_fill_ratio()) * 100.0, self.atlas_resets, ctx.pixels_per_point()));
+                *cpu = (0.0, 0.0);
+                *st = (now_i, 0, 0.0, 0.0, 0, 0.0, 0.0);
+            }
+        }
         self.frame_max = self.frame_max.max(self.frame_ms);
         if self.frame_ms > 50.0 && self.slow.len() < 40 {
             self.slow.push(format!("{:.0} ms after {}", self.frame_ms, self.last_cmd));

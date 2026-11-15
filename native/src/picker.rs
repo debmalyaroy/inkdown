@@ -68,6 +68,29 @@ pub struct Picker {
     scroll_to: bool,
 }
 
+/// Whether a command can do anything on this platform. Menus and the palette leave out
+/// the ones that cannot, so that every item shown does something.
+pub fn available(cmd: &str) -> bool {
+    let name = cmd.split(' ').next().unwrap_or(cmd);
+    if cfg!(any(target_os = "android", target_os = "ios")) {
+        // no folders outside the app, no second window or pane, no desktop programs to call
+        const DESKTOP_ONLY: &[&str] = &[
+            "open_folder", "close_folder", "new_window", "reveal_in_explorer", "toggle_fullscreen", "copy_path", "export_copy_rich", "export_gdoc", "integrations",
+            "build", "build_with", "cancel_build", "layout_columns_2", "layout_single", "focus_group_1", "focus_group_2", "move_to_group_2", "toggle_minimap", "update_download", "update_install",
+        ];
+        if DESKTOP_ONLY.contains(&name) {
+            return false;
+        }
+    }
+    if name == "tool_set_default" {
+        return cfg!(windows);
+    }
+    if name == "export_downloads" {
+        return cfg!(target_os = "android");
+    }
+    true
+}
+
 pub const COMMANDS: &[(&str, &str, &str)] = &[
     ("new_file", "File: New Document", icons::FILE_PLUS),
     ("new_code_file", "File: New Text File", icons::FILE_PLUS),
@@ -181,6 +204,7 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
     ("cancel_build", "Build: Cancel", icons::SQUARE),
     ("toggle_record_macro", "Macro: Start / Stop Recording", icons::CIRCLE),
     ("run_macro", "Macro: Play Back", icons::PLAY),
+    ("export_downloads", "Export: Save a Copy to Downloads", icons::FILE_DOWN),
     ("export_html", "Export: HTML…", icons::FILE_DOWN),
     ("export_pdf", "Export: PDF…", icons::FILE_DOWN),
     ("export_docx", "Export: Word (.docx)…", icons::FILE_DOWN),
@@ -312,7 +336,7 @@ impl Picker {
         self.items.clear();
         match kind {
             PickKind::Commands => {
-                for (id, title, icon) in COMMANDS {
+                for (id, title, icon) in COMMANDS.iter().filter(|c| available(c.0)) {
                     let key = app.keymap.label(id.split(' ').next().unwrap_or(id));
                     self.items.push(Item { label: title.to_string(), detail: key, icon, act: Act::Command(id.to_string()) });
                 }

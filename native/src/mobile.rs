@@ -36,11 +36,62 @@ pub fn insets_px() -> (f32, f32) {
     (0.0, 0.0)
 }
 
+/// Text on the system clipboard, if any.
+pub fn clipboard_get() -> Option<String> {
+    #[cfg(target_os = "android")]
+    {
+        android::clipboard_get()
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        None
+    }
+}
+
+/// Puts text on the system clipboard.
+pub fn clipboard_set(text: &str) {
+    #[cfg(target_os = "android")]
+    android::clipboard_set(text);
+    #[cfg(not(target_os = "android"))]
+    let _ = text;
+}
+
+/// Whether the device is in dark mode. Asked at most once a second; `None` when unknown.
+pub fn system_dark(now: f64) -> Option<bool> {
+    static CACHE: Mutex<(f64, Option<bool>)> = Mutex::new((-10.0, None));
+    let mut c = CACHE.lock().unwrap();
+    if now - c.0 >= 1.0 {
+        c.0 = now;
+        #[cfg(target_os = "android")]
+        {
+            c.1 = android::night_mode().or(c.1);
+        }
+    }
+    c.1
+}
+
 pub fn open_url(url: &str) {
     #[cfg(target_os = "android")]
     android::view_url(url);
     #[cfg(not(target_os = "android"))]
     let _ = url;
+}
+
+/// Copies a document another app gave us into app storage and remembers where it came
+/// from, so that saving writes back to it.
+#[cfg(target_os = "android")]
+fn import_uri(uri: &str) -> Option<PathBuf> {
+    let bytes = android::read_uri(uri);
+    log(&format!("read {:?} bytes from {uri}", bytes.as_ref().map(Vec::len)));
+    let bytes = bytes?;
+    let name = android::display_name(uri).unwrap_or_else(|| uri.rsplit('/').next().unwrap_or("document.md").to_string());
+    let name: String = name.chars().map(|c| if c.is_alphanumeric() || "._- ".contains(c) { c } else { '_' }).collect();
+    let dir = crate::settings::config_dir().join("Opened");
+    std::fs::create_dir_all(&dir).ok()?;
+    let path = dir.join(if name.is_empty() { "document.md".into() } else { name });
+    std::fs::write(&path, bytes).ok()?;
+    ORIGINS.lock().unwrap().get_or_insert_with(HashMap::new).insert(canonical(&path), uri.to_string());
+    Some(path)
 }
 
 /// The document this launch was asked to open, copied into app storage.
@@ -49,22 +100,109 @@ pub fn startup_file() -> Option<PathBuf> {
     {
         let uri = android::intent_uri();
         log(&format!("launch intent data: {uri:?}"));
-        let uri = uri?;
-        let bytes = android::read_uri(&uri);
-        log(&format!("read {:?} bytes from {uri}", bytes.as_ref().map(Vec::len)));
-        let bytes = bytes?;
-        let name = android::display_name(&uri).unwrap_or_else(|| uri.rsplit('/').next().unwrap_or("document.md").to_string());
-        let name: String = name.chars().map(|c| if c.is_alphanumeric() || "._- ".contains(c) { c } else { '_' }).collect();
-        let dir = crate::settings::config_dir().join("Opened");
-        std::fs::create_dir_all(&dir).ok()?;
-        let path = dir.join(if name.is_empty() { "document.md".into() } else { name });
-        std::fs::write(&path, bytes).ok()?;
-        ORIGINS.lock().unwrap().get_or_insert_with(HashMap::new).insert(canonical(&path), uri);
-        Some(path)
+        import_uri(&uri?)
     }
     #[cfg(not(target_os = "android"))]
     {
         None
+    }
+}
+
+/// Shows the system file picker. Returns false when this build cannot (then the caller
+/// falls back to the app's own documents). Picked files arrive through [`take_opened`].
+pub fn pick_file() -> bool {
+    #[cfg(target_os = "android")]
+    {
+        android::call_void("pickFile")
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        false
+    }
+}
+
+/// The next document picked, or sent by another app while Inkdown was running.
+pub fn take_opened() -> Option<PathBuf> {
+    #[cfg(target_os = "android")]
+    {
+        let uri = android::take_string("takeOpened")?;
+        log(&format!("document arrived: {uri}"));
+        import_uri(&uri)
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        None
+    }
+}
+
+/// Shows the system "save as" picker for a file called `name`. False when unavailable.
+pub fn pick_save(name: &str) -> bool {
+    #[cfg(target_os = "android")]
+    {
+        android::pick_save(name, mime_of(name))
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = name;
+        false
+    }
+}
+
+/// Result of the "save as" picker: `None` while it is open, `Some(None)` when cancelled,
+/// `Some(Some(place))` when a document was created.
+pub fn take_saved() -> Option<Option<String>> {
+    #[cfg(target_os = "android")]
+    {
+        android::take_string("takeSaved").map(|s| if s.is_empty() { None } else { Some(s) })
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        None
+    }
+}
+
+/// Writes `bytes` to a document chosen with [`pick_save`] and ties the working copy at
+/// `path` to it, so that later saves go there too.
+pub fn save_to(place: &str, path: &Path, bytes: &[u8]) -> Result<String, String> {
+    #[cfg(target_os = "android")]
+    {
+        if !android::write_uri(place, bytes) {
+            return Err("Could not write to the chosen location.".into());
+        }
+        ORIGINS.lock().unwrap().get_or_insert_with(HashMap::new).insert(canonical(path), place.to_string());
+        Ok(android::display_name(place).unwrap_or_else(|| "the chosen location".into()))
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (place, path, bytes);
+        Err("Not available on this device.".into())
+    }
+}
+
+/// Sends an HTML page to the system print dialog (which can save a PDF). False when unavailable.
+pub fn print_html(html: &str, name: &str) -> bool {
+    #[cfg(target_os = "android")]
+    {
+        android::print_html(html, name)
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (html, name);
+        false
+    }
+}
+
+fn mime_of(name: &str) -> &'static str {
+    match name.rsplit('.').next().unwrap_or("").to_lowercase().as_str() {
+        "html" | "htm" => "text/html",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "rtf" => "application/rtf",
+        "png" => "image/png",
+        "svg" => "image/svg+xml",
+        "json" | "avsc" => "application/json",
+        "md" | "markdown" => "text/markdown",
+        "csv" => "text/csv",
+        _ => "text/plain",
     }
 }
 
@@ -92,6 +230,25 @@ pub fn after_save(path: &Path, bytes: &[u8]) -> Result<(), String> {
 /// The app's data folder is reachable under two names (`/data/user/0` and `/data/data`).
 fn canonical(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// Puts a file where other apps can reach it: `Download/Inkdown` in shared storage.
+/// Returns the place to tell the user about.
+pub fn save_to_downloads(name: &str, bytes: &[u8]) -> Result<String, String> {
+    #[cfg(target_os = "android")]
+    {
+        let mime = mime_of(name);
+        if android::insert_download(name, mime, bytes) {
+            Ok(format!("Downloads/Inkdown/{name}"))
+        } else {
+            Err("Could not write to the Downloads folder on this device.".into())
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (name, bytes);
+        Err("Not available on this device.".into())
+    }
 }
 
 /// Write a line to the Android log (`adb logcat -s Inkdown`).
@@ -149,6 +306,96 @@ mod android {
         env.call_static_method("android/net/Uri", "parse", "(Ljava/lang/String;)Landroid/net/Uri;", &[JValue::Object(&s)])?.l()
     }
 
+    /// Calls a no-argument method of our Java activity. False when the activity is the plain
+    /// NativeActivity (an older package) and has no such method.
+    pub fn call_void(method: &str) -> bool {
+        with_env(|env, act| {
+            env.call_method(act, method, "()V", &[])?;
+            Ok(())
+        })
+        .is_some()
+    }
+
+    /// Calls a method of our Java activity that returns a string or null.
+    pub fn take_string(method: &str) -> Option<String> {
+        with_env(|env, act| {
+            let s = env.call_method(act, method, "()Ljava/lang/String;", &[])?.l()?;
+            if s.is_null() {
+                return Ok(None);
+            }
+            let s: String = env.get_string(&JString::from(s))?.into();
+            Ok(Some(s))
+        })
+        .flatten()
+    }
+
+    pub fn pick_save(name: &str, mime: &str) -> bool {
+        with_env(|env, act| {
+            let n = env.new_string(name)?;
+            let m = env.new_string(mime)?;
+            env.call_method(act, "pickSave", "(Ljava/lang/String;Ljava/lang/String;)V", &[JValue::Object(&n), JValue::Object(&m)])?;
+            Ok(())
+        })
+        .is_some()
+    }
+
+    pub fn print_html(html: &str, name: &str) -> bool {
+        with_env(|env, act| {
+            let h = env.new_string(html)?;
+            let n = env.new_string(name)?;
+            env.call_method(act, "printHtml", "(Ljava/lang/String;Ljava/lang/String;)V", &[JValue::Object(&h), JValue::Object(&n)])?;
+            Ok(())
+        })
+        .is_some()
+    }
+
+    fn clipboard<'a>(env: &mut JNIEnv<'a>, act: &JObject) -> jni::errors::Result<JObject<'a>> {
+        let name = env.new_string("clipboard")?;
+        env.call_method(act, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;", &[JValue::Object(&name)])?.l()
+    }
+
+    pub fn clipboard_set(text: &str) {
+        let _ = with_env(|env, act| {
+            let cm = clipboard(env, act)?;
+            let label = env.new_string("Inkdown")?;
+            let value = env.new_string(text)?;
+            let clip = env.call_static_method("android/content/ClipData", "newPlainText", "(Ljava/lang/CharSequence;Ljava/lang/CharSequence;)Landroid/content/ClipData;", &[JValue::Object(&label), JValue::Object(&value)])?.l()?;
+            env.call_method(&cm, "setPrimaryClip", "(Landroid/content/ClipData;)V", &[JValue::Object(&clip)])?;
+            Ok(())
+        });
+    }
+
+    pub fn clipboard_get() -> Option<String> {
+        with_env(|env, act| {
+            let cm = clipboard(env, act)?;
+            let clip = env.call_method(&cm, "getPrimaryClip", "()Landroid/content/ClipData;", &[])?.l()?;
+            if clip.is_null() || env.call_method(&clip, "getItemCount", "()I", &[])?.i()? == 0 {
+                return Ok(None);
+            }
+            let item = env.call_method(&clip, "getItemAt", "(I)Landroid/content/ClipData$Item;", &[JValue::Int(0)])?.l()?;
+            let chars = env.call_method(&item, "coerceToText", "(Landroid/content/Context;)Ljava/lang/CharSequence;", &[JValue::Object(act)])?.l()?;
+            if chars.is_null() {
+                return Ok(None);
+            }
+            let s = env.call_method(&chars, "toString", "()Ljava/lang/String;", &[])?.l()?;
+            let s: String = env.get_string(&JString::from(s))?.into();
+            Ok(Some(s))
+        })
+        .flatten()
+    }
+
+    /// `Configuration.uiMode`: the night bits say whether the system theme is dark.
+    pub fn night_mode() -> Option<bool> {
+        const UI_MODE_NIGHT_MASK: i32 = 0x30;
+        const UI_MODE_NIGHT_YES: i32 = 0x20;
+        with_env(|env, act| {
+            let res = env.call_method(act, "getResources", "()Landroid/content/res/Resources;", &[])?.l()?;
+            let cfg = env.call_method(&res, "getConfiguration", "()Landroid/content/res/Configuration;", &[])?.l()?;
+            let mode = env.get_field(&cfg, "uiMode", "I")?.i()?;
+            Ok(mode & UI_MODE_NIGHT_MASK == UI_MODE_NIGHT_YES)
+        })
+    }
+
     pub fn intent_uri() -> Option<String> {
         with_env(|env, act| {
             let intent = env.call_method(act, "getIntent", "()Landroid/content/Intent;", &[])?.l()?;
@@ -193,6 +440,35 @@ mod android {
             let mode = env.new_string("wt")?;
             let resolver = env.call_method(act, "getContentResolver", "()Landroid/content/ContentResolver;", &[])?.l()?;
             let stream = env.call_method(&resolver, "openOutputStream", "(Landroid/net/Uri;Ljava/lang/String;)Ljava/io/OutputStream;", &[JValue::Object(&juri), JValue::Object(&mode)])?.l()?;
+            let arr = env.byte_array_from_slice(bytes)?;
+            env.call_method(&stream, "write", "([B)V", &[JValue::Object(&arr)])?;
+            env.call_method(&stream, "close", "()V", &[])?;
+            Ok(true)
+        })
+        .unwrap_or(false)
+    }
+
+    /// Creates `Download/Inkdown/<name>` through MediaStore (Android 10 and later; needs no
+    /// permission) and writes the bytes to it.
+    pub fn insert_download(name: &str, mime: &str, bytes: &[u8]) -> bool {
+        with_env(|env, act| {
+            let sdk = env.get_static_field("android/os/Build$VERSION", "SDK_INT", "I")?.i()?;
+            if sdk < 29 {
+                return Ok(false);
+            }
+            let values = env.new_object("android/content/ContentValues", "()V", &[])?;
+            for (key, value) in [("_display_name", name), ("mime_type", mime), ("relative_path", "Download/Inkdown")] {
+                let k = env.new_string(key)?;
+                let v = env.new_string(value)?;
+                env.call_method(&values, "put", "(Ljava/lang/String;Ljava/lang/String;)V", &[JValue::Object(&k), JValue::Object(&v)])?;
+            }
+            let collection = env.get_static_field("android/provider/MediaStore$Downloads", "EXTERNAL_CONTENT_URI", "Landroid/net/Uri;")?.l()?;
+            let resolver = env.call_method(act, "getContentResolver", "()Landroid/content/ContentResolver;", &[])?.l()?;
+            let item = env.call_method(&resolver, "insert", "(Landroid/net/Uri;Landroid/content/ContentValues;)Landroid/net/Uri;", &[JValue::Object(&collection), JValue::Object(&values)])?.l()?;
+            if item.is_null() {
+                return Ok(false);
+            }
+            let stream = env.call_method(&resolver, "openOutputStream", "(Landroid/net/Uri;)Ljava/io/OutputStream;", &[JValue::Object(&item)])?.l()?;
             let arr = env.byte_array_from_slice(bytes)?;
             env.call_method(&stream, "write", "([B)V", &[JValue::Object(&arr)])?;
             env.call_method(&stream, "close", "()V", &[])?;

@@ -198,6 +198,24 @@ pub fn html_page(markdown: &str, stem: &str, base: Option<&Path>, png: bool) -> 
     (html::document(&tops, &title, &HtmlOpts { base, png, pal: &pal }), title)
 }
 
+/// Reports a finished export. On a phone the file is also copied to the shared Downloads
+/// folder, because other apps cannot read Inkdown's own storage.
+fn exported(app: &mut InkApp, path: &Path, msg: &str) {
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        match std::fs::read(path).map_err(|e| e.to_string()).and_then(|b| crate::mobile::save_to_downloads(&name, &b)) {
+            Ok(place) => app.toast(format!("Saved to {place}")),
+            Err(_) => app.toast(format!("{msg} in Inkdown's documents")),
+        }
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        let _ = path;
+        app.toast(msg);
+    }
+}
+
 /// A Chromium-family browser that can print to PDF without showing a window.
 pub fn pdf_browser() -> Option<PathBuf> {
     let mut candidates: Vec<PathBuf> = Vec::new();
@@ -289,6 +307,17 @@ fn background(app: &mut InkApp, ctx: &egui::Context, work: impl FnOnce() -> Done
 }
 
 pub fn command(app: &mut InkApp, ctx: &egui::Context, name: &str) {
+    // phones: any document, as it is, into the shared Downloads folder
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    if name == "export_downloads" {
+        let Some(d) = app.docs.get(app.active) else { return };
+        let (file, text) = (d.name.clone(), d.buf.text());
+        match crate::mobile::save_to_downloads(&file, text.as_bytes()) {
+            Ok(place) => app.toast(format!("Saved to {place}")),
+            Err(e) => app.toast(e),
+        }
+        return;
+    }
     // diagram documents
     if matches!(name, "export_png" | "export_svg") {
         let Some(d) = app.docs.get(app.active) else { return };
@@ -309,7 +338,10 @@ pub fn command(app: &mut InkApp, ctx: &egui::Context, name: &str) {
             Ok(Some(path))
         });
         match result {
-            Ok(Some(p)) => app.toast(format!("Saved {}", p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default())),
+            Ok(Some(p)) => {
+                let msg = format!("Saved {}", p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default());
+                exported(app, &p, &msg);
+            }
             Ok(None) => {}
             Err(e) => app.toast(e),
         }
@@ -324,7 +356,7 @@ pub fn command(app: &mut InkApp, ctx: &egui::Context, name: &str) {
             if let Some(path) = save_as(app, &format!("{stem}.html")) {
                 let (page, _) = html_page(&text, &stem, base.as_deref(), false);
                 match std::fs::write(&path, page) {
-                    Ok(()) => app.toast("HTML saved"),
+                    Ok(()) => exported(app, &path, "HTML saved"),
                     Err(e) => app.toast(format!("Could not save: {e}")),
                 }
             }
@@ -336,9 +368,17 @@ pub fn command(app: &mut InkApp, ctx: &egui::Context, name: &str) {
                 let doc = docx::build(&text, &a, &stem);
                 let bytes = if ext == "docx" { docx::write_docx(&doc) } else { Ok(docx::write_rtf(&doc)) };
                 match bytes.and_then(|b| std::fs::write(&path, b).map_err(|e| e.to_string())) {
-                    Ok(()) => app.toast(if ext == "docx" { "Word document saved" } else { "Rich text saved" }),
+                    Ok(()) => exported(app, &path, if ext == "docx" { "Word document saved" } else { "Rich text saved" }),
                     Err(e) => app.toast(format!("Could not export: {e}")),
                 }
+            }
+        }
+        // phones: the system print dialog prints the page or saves it as a PDF
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        "export_pdf" | "print" => {
+            let (page, _) = html_page(&text, &stem, base.as_deref(), false);
+            if !crate::mobile::print_html(&page, &stem) {
+                app.toast("Printing is not available on this device.");
             }
         }
         #[cfg(not(any(target_os = "android", target_os = "ios")))]

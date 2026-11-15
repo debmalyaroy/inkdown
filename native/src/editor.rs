@@ -1199,15 +1199,28 @@ pub fn show(ui: &mut Ui, view: &mut EdView, buf: &mut Buffer, hl: &mut Highlight
     }
 
     // --- pointer
-    if ui.input(|i| i.any_touches()) && response.dragged() {
-        let d = response.drag_delta();
-        view.scroll.y -= d.y;
-        view.scroll.x -= d.x;
-    }
     let pointer = ui.input(|i| i.pointer.interact_pos());
     let mods = ui.input(|i| i.modifiers);
     let (pressed, down, released, middle_pressed, middle_down) = ui.input(|i| (i.pointer.primary_pressed(), i.pointer.primary_down(), i.pointer.primary_released(), i.pointer.button_pressed(egui::PointerButton::Middle), i.pointer.button_down(egui::PointerButton::Middle)));
-    let touch = ui.input(|i| i.any_touches());
+    let touch = crate::platform::touch(ui.ctx());
+    if touch {
+        // a finger drag scrolls, and the page keeps moving for a moment after the finger lifts
+        let dt = ui.input(|i| i.stable_dt).clamp(0.001, 0.05);
+        if response.dragged() {
+            let d = response.drag_delta();
+            view.scroll.y -= d.y;
+            view.scroll.x -= d.x;
+            view.velocity = 0.55 * view.velocity + 0.45 * (-d.y / dt);
+        } else if down {
+            view.velocity = 0.0;
+        } else if view.velocity.abs() > 12.0 {
+            view.scroll.y += view.velocity * dt;
+            view.velocity *= (-dt * 3.2).exp();
+            ui.ctx().request_repaint();
+        } else {
+            view.velocity = 0.0;
+        }
+    }
     let scrollbar_w = 12.0;
     let vbar = Rect::from_min_max(pos2(geo.text.max.x - scrollbar_w, geo.text.min.y), geo.text.max);
     let hbar = Rect::from_min_max(pos2(geo.text.min.x, geo.text.max.y - scrollbar_w), pos2(geo.text.max.x - scrollbar_w, geo.text.max.y));
@@ -1218,8 +1231,30 @@ pub fn show(ui: &mut Ui, view: &mut EdView, buf: &mut Buffer, hl: &mut Highlight
         (row, (x / cw + 0.5).max(0.0) as usize)
     };
     let popup_open = egui::Popup::is_any_open(ui.ctx());
+    if touch && !popup_open {
+        // a tap places the caret and a double tap selects the word; a press alone does
+        // nothing, so that starting a scroll on the text does not move the caret
+        if let Some(p) = pointer.filter(|p| geo.text.contains(*p) && !vbar.contains(*p)) {
+            if response.double_clicked() || response.clicked() {
+                ui.memory_mut(|m| m.request_focus(id));
+                view.completion = None;
+                view.velocity = 0.0;
+                let (row, vc) = hit(p, view.scroll);
+                let pos = pos_at(row, vc, buf, &view.map);
+                if response.double_clicked() {
+                    let (a, z) = edit::word_at(buf, pos);
+                    buf.set_sel(a, z);
+                } else {
+                    buf.set_caret(pos);
+                }
+                buf.occur_word = false;
+                view.blink_from = now;
+                view.snippet = None;
+            }
+        }
+    }
     if let Some(p) = pointer {
-        if (pressed || middle_pressed) && response.hovered() && !popup_open {
+        if (pressed || middle_pressed) && response.hovered() && !popup_open && !(touch && geo.text.contains(p) && !vbar.contains(p)) {
             ui.memory_mut(|m| m.request_focus(id));
             view.completion = None;
             let (row, vc) = hit(p, view.scroll);

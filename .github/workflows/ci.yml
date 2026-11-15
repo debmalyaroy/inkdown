@@ -58,3 +58,21 @@ jobs:
       - name: cargo check
         working-directory: native
         run: cargo check --lib --locked --target aarch64-linux-android
+
+  android-apk:
+    name: Android APK (package)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build APK (Docker)
+        run: docker build -f packaging/android/Dockerfile -t inkdown-android .
+      - name: Copy APK out of the image
+        run: |
+          mkdir -p dist/android
+          docker run --rm -v "$PWD/dist/android:/out" inkdown-android
+      - uses: actions/upload-artifact@v4
+        with:
+          name: inkdown-android-apk
+          path: dist/android/inkdown.apk
+          if-no-files-found: error
+          retention-days: 14

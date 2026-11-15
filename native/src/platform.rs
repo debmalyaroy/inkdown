@@ -7,8 +7,9 @@ mod imp {
     use super::*;
 
     pub fn open_dialog(dir: Option<PathBuf>) -> Vec<PathBuf> {
-        if std::env::var_os("INKDOWN_DIALOG_DIR").is_some() {
-            return Vec::new();
+        // tests answer the dialog with INKDOWN_DIALOG_OPEN (paths separated by `|`)
+        if scripted() || std::env::var_os("INKDOWN_DIALOG_DIR").is_some() {
+            return std::env::var("INKDOWN_DIALOG_OPEN").map(|s| s.split('|').filter(|p| !p.is_empty()).map(PathBuf::from).collect()).unwrap_or_default();
         }
         let mut d = rfd::FileDialog::new();
         if let Some(dir) = dir.filter(|d| d.is_dir()) {
@@ -33,6 +34,9 @@ mod imp {
     }
 
     pub fn folder_dialog(dir: Option<PathBuf>) -> Option<PathBuf> {
+        if scripted() {
+            return std::env::var_os("INKDOWN_DIALOG_FOLDER").map(PathBuf::from);
+        }
         let mut d = rfd::FileDialog::new();
         if let Some(dir) = dir.filter(|d| d.is_dir()) {
             d = d.set_directory(dir);
@@ -41,6 +45,9 @@ mod imp {
     }
 
     pub fn shell_open(target: &str) {
+        if note_launch(target) {
+            return;
+        }
         #[cfg(windows)]
         {
             // ShellExecute, not `cmd /C start`: URLs contain `&`, which cmd would split on
@@ -65,6 +72,9 @@ mod imp {
     }
 
     pub fn reveal(path: &Path) {
+        if note_launch(&format!("reveal:{}", path.display())) {
+            return;
+        }
         #[cfg(windows)]
         {
             let _ = std::process::Command::new("explorer").arg(format!("/select,{}", path.display())).spawn();
@@ -82,6 +92,9 @@ mod imp {
     }
 
     pub fn new_window() {
+        if note_launch("new-window") {
+            return;
+        }
         if let Ok(exe) = std::env::current_exe() {
             let _ = std::process::Command::new(exe).env("INKDOWN_NO_SESSION", "1").spawn();
         }
@@ -113,6 +126,47 @@ mod imp {
 }
 
 pub use imp::*;
+
+/// True in a scripted test run, where nothing may open a system dialog or another program.
+pub fn scripted() -> bool {
+    std::env::var_os("INKDOWN_AUTOMATION").is_some()
+}
+
+static LAUNCHED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// In a scripted run, records what would have been opened and returns true (do not open).
+#[allow(dead_code)]
+fn note_launch(target: &str) -> bool {
+    if scripted() {
+        LAUNCHED.lock().unwrap().push(target.to_string());
+        return true;
+    }
+    false
+}
+
+/// Everything a scripted run asked the system to open (pages, folders, windows).
+pub fn launched() -> Vec<String> {
+    LAUNCHED.lock().unwrap().clone()
+}
+
+/// True when the user is working with a finger rather than a mouse.
+///
+/// Always true on phones and tablets. Elsewhere it stays true for a few seconds after the
+/// last touch: egui decides what a press hits from the widgets of the frame before, so the
+/// answer must already be right when the finger lands.
+pub fn touch(ctx: &egui::Context) -> bool {
+    if cfg!(any(target_os = "android", target_os = "ios")) {
+        return true;
+    }
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static LAST_TOUCH: AtomicU64 = AtomicU64::new(0);
+    let (now, touching) = ctx.input(|i| (i.time, i.any_touches()));
+    if touching {
+        LAST_TOUCH.store((now + 1.0).to_bits(), Ordering::Relaxed);
+    }
+    let last = f64::from_bits(LAST_TOUCH.load(Ordering::Relaxed));
+    last > 0.0 && now + 1.0 - last < 5.0
+}
 
 /// Cheap check used before opening an unknown linked file inside the editor.
 pub fn looks_like_text(path: &Path) -> bool {

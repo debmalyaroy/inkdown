@@ -27,7 +27,11 @@ pub fn switch(ui: &mut Ui, pal: &Palette, on: bool, id: &str) -> egui::Response 
 }
 
 fn menu_item(ui: &mut Ui, app: &mut InkApp, icon: &str, label: &str, cmd: &str) {
-    let key = app.keymap.label(cmd.split(' ').next().unwrap_or(cmd));
+    if !crate::picker::available(cmd) {
+        return;
+    }
+    // key names mean nothing on a touch screen and take room the labels need
+    let key = if crate::platform::touch(ui.ctx()) { String::new() } else { app.keymap.label(cmd.split(' ').next().unwrap_or(cmd)) };
     let b = egui::Button::new(format!("{icon}   {label}")).shortcut_text(egui::RichText::new(key).size(11.5).color(app.pal.faint)).min_size(vec2(230.0, 28.0));
     if ui.add(b).clicked() {
         app.pending.push(cmd.to_string());
@@ -47,11 +51,28 @@ fn main_menu(ui: &mut Ui, app: &mut InkApp) {
     menu_item(ui, app, icons::SAVE, "Save As…", "save_as");
     menu_item(ui, app, icons::SAVE, "Save All", "save_all");
     ui.separator();
+    ui.menu_button(format!("{}   Edit", icons::PENCIL), |ui| {
+        menu_item(ui, app, icons::UNDO_2, "Undo", "undo");
+        menu_item(ui, app, icons::REDO_2, "Redo", "redo");
+        ui.separator();
+        menu_item(ui, app, icons::SCISSORS, "Cut", "cut");
+        menu_item(ui, app, icons::COPY, "Copy", "copy");
+        menu_item(ui, app, icons::CLIPBOARD, "Paste", "paste");
+        menu_item(ui, app, icons::TEXT_SELECT, "Select All", "select_all");
+        ui.separator();
+        menu_item(ui, app, icons::SEARCH, "Find…", "show_find");
+        menu_item(ui, app, icons::REPLACE, "Replace…", "show_replace");
+        menu_item(ui, app, icons::SEARCH, "Find in Files…", "find_in_files");
+    });
     ui.menu_button(format!("{}   Export", icons::FILE_DOWN), |ui| export_menu(ui, app));
     ui.menu_button(format!("{}   Tools", icons::WRENCH), |ui| {
-        for (id, title, icon) in crate::picker::COMMANDS.iter().filter(|c| c.0.starts_with("tool_")) {
-            menu_item(ui, app, icon, title.trim_start_matches("Tools: "), id);
-        }
+        // a long list: scroll inside the screen instead of running off its edge
+        let room = (ui.ctx().content_rect().height() - 150.0).max(200.0);
+        egui::ScrollArea::vertical().max_height(room).show(ui, |ui| {
+            for (id, title, icon) in crate::picker::COMMANDS.iter().filter(|c| c.0.starts_with("tool_")) {
+                menu_item(ui, app, icon, title.trim_start_matches("Tools: "), id);
+            }
+        });
     });
     ui.menu_button(format!("{}   Preferences", icons::SETTINGS), |ui| {
         menu_item(ui, app, icons::PALETTE, "Theme…", "select_theme");
@@ -87,9 +108,11 @@ pub fn export_menu(ui: &mut Ui, app: &mut InkApp) {
     let kind = app.docs.get(app.active).map(|d| d.kind);
     let prose = matches!(kind, Some(Kind::Markdown | Kind::Asciidoc));
     let diagram = matches!(kind, Some(Kind::Mermaid | Kind::Dot | Kind::Svg));
+    // phones only: the document itself, to where other apps can open it
+    menu_item(ui, app, icons::FILE_DOWN, "Save a Copy to Downloads", "export_downloads");
     if prose {
         menu_item(ui, app, icons::GLOBE, "HTML…", "export_html");
-        menu_item(ui, app, icons::FILE_DOWN, "PDF…", "export_pdf");
+        menu_item(ui, app, icons::FILE_DOWN, if cfg!(any(target_os = "android", target_os = "ios")) { "Print or Save as PDF…" } else { "PDF…" }, "export_pdf");
         menu_item(ui, app, icons::FILE_TEXT, "Word (.docx)…", "export_docx");
         menu_item(ui, app, icons::FILE_TEXT, "Rich Text (.rtf)…", "export_rtf");
         ui.separator();
@@ -100,7 +123,7 @@ pub fn export_menu(ui: &mut Ui, app: &mut InkApp) {
     } else if diagram {
         menu_item(ui, app, icons::FILE_IMAGE, "PNG…", "export_png");
         menu_item(ui, app, icons::FILE_IMAGE, "SVG…", "export_svg");
-    } else {
+    } else if !crate::picker::available("export_downloads") {
         ui.label(egui::RichText::new("Nothing to export for this file type").color(app.pal.muted).size(12.5));
     }
 }
@@ -804,7 +827,7 @@ pub fn dialogs(ctx: &egui::Context, app: &mut InkApp) {
                 ui.add_space(8.0);
                 egui::ScrollArea::vertical().max_height((ui.ctx().content_rect().height() - 220.0).max(160.0)).show(ui, |ui| {
                     let mut last_group = "";
-                    for (id, title, _) in crate::picker::COMMANDS {
+                    for (id, title, _) in crate::picker::COMMANDS.iter().filter(|c| crate::picker::available(c.0)) {
                         let key = app.keymap.label(id.split(' ').next().unwrap_or(id));
                         if key.is_empty() {
                             continue;

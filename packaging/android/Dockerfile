@@ -3,7 +3,9 @@
 #   docker build -f packaging/android/Dockerfile -t inkdown-android .
 #   docker run --rm -v "${PWD}/dist/android:/out" inkdown-android
 #
-# Produces a universal APK (arm64-v8a + x86_64) signed with a throwaway test key.
+# cargo builds the native libraries; package.sh then assembles the APK with the Java
+# activity (file pickers, printing) and the manifest. The result is a universal APK
+# (arm64-v8a + x86_64) signed with a throwaway test key.
 # For Google Play, sign with your own upload key instead (see packaging/android/README.md).
 #
 # NOTE: the sdkmanager step below accepts the Android SDK licence agreement.
@@ -13,7 +15,7 @@ ENV ANDROID_HOME=/opt/android \
     ANDROID_NDK_ROOT=/opt/android/ndk/26.3.11579264 \
     PATH=$PATH:/opt/android/cmdline-tools/latest/bin:/opt/android/platform-tools
 
-RUN apt-get update && apt-get install -y --no-install-recommends openjdk-17-jdk-headless unzip curl ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends openjdk-17-jdk-headless zip unzip curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p $ANDROID_HOME/cmdline-tools \
@@ -38,7 +40,7 @@ WORKDIR /src
 # the native crate reuses a few files of the root crate by path
 COPY src ./src
 COPY assets/icon.png assets/icon.ico ./assets/
-COPY packaging/android/res ./packaging/android/res
+COPY packaging/android ./packaging/android
 COPY native/Cargo.toml native/Cargo.lock native/build.rs ./native/
 COPY native/src ./native/src
 COPY native/fonts ./native/fonts
@@ -51,6 +53,6 @@ ARG JOBS=6
 RUN --mount=type=cache,target=/src/native/target,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     CARGO_BUILD_JOBS=$JOBS cargo apk build --release --lib \
-    && mkdir -p /apk && cp target/release/apk/*.apk /apk/
+    && mkdir -p /apk && sh ../packaging/android/package.sh target/release/apk/inkdown.apk /apk/inkdown.apk
 
 CMD ["sh", "-c", "cp /apk/*.apk /out/ && ls -la /out"]
