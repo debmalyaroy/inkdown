@@ -44,6 +44,8 @@ pub struct Text {
     pub consumed: u64,
     /// The last bytes read, to recognise later that the source only grew.
     pub sig: Vec<u8>,
+    /// The first bytes, to recognise the same document when a server sends it again.
+    pub head: Vec<u8>,
 }
 
 #[derive(Default, Clone)]
@@ -78,6 +80,7 @@ pub struct Source {
     pub total: u64,
     pub consumed: u64,
     pub sig: Vec<u8>,
+    pub head: Vec<u8>,
     pub etag: Option<String>,
     pub modified: Option<String>,
     pub hash: u64,
@@ -220,6 +223,7 @@ fn read_text_as(mut reader: impl Read, forced: Option<&'static Encoding>, progre
     let mut d = Decoding::new(encoding, strict);
     let mut consumed = 0u64;
     let mut sig = Vec::new();
+    let head = chunk[..n.min(SIG)].to_vec();
     let mut first = true;
     loop {
         let last = n < chunk.len();
@@ -237,7 +241,7 @@ fn read_text_as(mut reader: impl Read, forced: Option<&'static Encoding>, progre
         n = fill(&mut reader, &mut chunk)?;
     }
     let (rope, crlf) = d.finish();
-    Ok(Text { rope, encoding, bom: bom > 0, crlf, consumed, sig })
+    Ok(Text { rope, encoding, bom: bom > 0, crlf, consumed, sig, head })
 }
 
 /// Decodes text from bytes already in memory (a download).
@@ -426,6 +430,7 @@ fn hash_bytes(bytes: &[u8]) -> u64 {
 pub struct Known {
     pub consumed: u64,
     pub sig: Vec<u8>,
+    pub head: Vec<u8>,
     pub etag: Option<String>,
     pub modified: Option<String>,
     pub hash: u64,
@@ -442,7 +447,7 @@ const STREAM_AFTER: std::time::Duration = std::time::Duration::from_millis(700);
 /// slow download) is a stream: what has arrived is shown at once and every further piece
 /// is appended as it arrives, for as long as the server keeps the connection open.
 pub fn run_url(url: &str, known: &Known, send: &mut dyn FnMut(Update) -> bool) {
-    let Known { consumed, sig, etag, modified, hash } = known.clone();
+    let Known { consumed, sig, head: known_head, etag, modified, hash } = known.clone();
     let (etag, modified) = (etag.as_deref(), modified.as_deref());
     // only a strong validator makes a partial request safe
     let strong = etag.filter(|e| !e.starts_with("W/"));
@@ -505,7 +510,8 @@ pub fn run_url(url: &str, known: &Known, send: &mut dyn FnMut(Update) -> bool) {
             return;
         }
         let waited = started.elapsed();
-        let enough = if again { body.len() as u64 > consumed || waited > STREAM_AFTER * 6 } else { true };
+        // enough to tell whether this is the document we hold, sent again from its start
+        let enough = !again || body.len() >= known_head.len().max(1) || waited > STREAM_AFTER * 6;
         if waited > STREAM_AFTER && enough {
             break;
         }
@@ -526,15 +532,19 @@ pub fn run_url(url: &str, known: &Known, send: &mut dyn FnMut(Update) -> bool) {
     let mut tail = if partial { sig.clone() } else { Vec::new() };
     // bytes not yet shown: the end of a character may still be on its way
     let mut carry: Vec<u8>;
+    // bytes at the start of this answer that we already hold and must not show again
+    let mut skip = 0u64;
     if partial {
         carry = body;
-    } else if again && body.len() as u64 > consumed && body[..consumed as usize].ends_with(&sig) {
-        // the same document from its start: skip what we hold
-        hasher.write(&body[..consumed as usize]);
+    } else if again && !known_head.is_empty() && body.starts_with(&known_head) {
+        // the document we hold, sent again from its start (the server closed the stream
+        // and replays it): pass over what we hold, then go on appending
+        hashed = false;
+        skip = consumed;
         total = consumed;
         tail = sig.clone();
-        carry = body.split_off(consumed as usize);
-    } else if again && (body.len() as u64) < consumed {
+        carry = body;
+    } else if again {
         // an endpoint that sends only what is new each time it is asked: continue
         hashed = false;
         total = consumed;
@@ -559,12 +569,18 @@ pub fn run_url(url: &str, known: &Known, send: &mut dyn FnMut(Update) -> bool) {
         let mut t = text;
         t.consumed = total;
         t.sig = tail.clone();
+        t.head = body[..used.min(SIG)].to_vec();
         if !send(Update::Replace(Box::new(t), meta(0))) {
             return;
         }
         carry = body.split_off(used);
     }
     loop {
+        if skip > 0 && !carry.is_empty() {
+            let n = (skip as usize).min(carry.len());
+            carry.drain(..n);
+            skip -= n as u64;
+        }
         if !carry.is_empty() {
             let (text, crlf, used) = match utf8_prefix(&carry) {
                 Some(p) => p,
@@ -701,7 +717,7 @@ pub fn start(d: &mut Doc, wake: impl Fn() + Send + 'static) {
     if d.live.job.is_some() {
         return;
     }
-    let known = Known { consumed: d.live.consumed, sig: d.live.sig.clone(), etag: d.live.etag.clone(), modified: d.live.modified.clone(), hash: d.live.hash };
+    let known = Known { consumed: d.live.consumed, sig: d.live.sig.clone(), head: d.live.head.clone(), etag: d.live.etag.clone(), modified: d.live.modified.clone(), hash: d.live.hash };
     if let Some(url) = d.live.url.clone() {
         d.live.job = spawn("ink-fetch", wake, move |send| run_url(&url, &known, send));
     } else if let Some(path) = d.path.clone() {
@@ -760,6 +776,7 @@ pub fn apply(d: &mut Doc, set: &Settings, update: Update, now: f64) -> Option<St
             d.crlf = t.crlf;
             d.live.consumed = t.consumed;
             d.live.sig = t.sig;
+            d.live.head = t.head;
             d.live.updates += 1;
             meta_in(d, meta);
             // a small document keeps its undo history; a large one gets a fresh buffer

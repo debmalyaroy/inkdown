@@ -725,7 +725,7 @@ if (Want "web") {
             Start-Sleep -Milliseconds 200
             $port = (Get-Content "$Out\port.txt" -Raw).Trim()
             $u = "http://127.0.0.1:$port"
-            Set-Content "$Out\web.txt" "cmd open_url $u/app.log`nsleep 2500`nwait 5`ndump $o/wb1.json`nsleep 5000`nwait 5`ndump $o/wb2.json`ntype typed`nwait 3`ncmd open_url $u/README.md`nsleep 2000`nwait 5`ndump $o/wb3.json`ncmd open_url $u/missing.txt`nsleep 2000`nwait 5`ndump $o/wb4.json`ncmd open_url $u/stream.log`nsleep 2600`nwait 5`ndump $o/wb5.json`nsleep 2600`nwait 5`ndump $o/wb6.json`nquit"
+            Set-Content "$Out\web.txt" "cmd open_url $u/app.log`nsleep 2500`nwait 5`ndump $o/wb1.json`nsleep 5000`nwait 5`ndump $o/wb2.json`ntype typed`nwait 3`ncmd open_url $u/README.md`nsleep 2000`nwait 5`ndump $o/wb3.json`ncmd open_url $u/missing.txt`nsleep 2000`nwait 5`ndump $o/wb4.json`ncmd open_url $u/stream.log`nsleep 2600`nwait 5`ndump $o/wb5.json`nsleep 2600`nwait 5`ndump $o/wb6.json`ncmd open_url $u/stream.log?n=3`nsleep 9000`nwait 5`ndump $o/wb7.json`nquit"
             $env:INKDOWN_DATA_DIR = "$Out\profile"; $env:INKDOWN_WINDOW = "1280x840"; $env:INKDOWN_AUTOMATION = "$Out\web.txt"
             $p = Start-Process -FilePath $exe -PassThru
             $t0 = Get-Date
@@ -746,6 +746,8 @@ if (Want "web") {
             $s1 = Doc (J "wb5"); $s2 = Doc (J "wb6")
             Check "[$mode] a connection the server keeps open is shown as it arrives" ($s1.name -eq "stream.log" -and $s1.live.streaming -and $s1.lines -ge 5 -and $s1.syntax -eq "log" -and $s1.text -like "*connected*tick 0 costs €5*") "streaming=$($s1.live.streaming) lines=$($s1.lines)"
             Check "[$mode] the stream keeps adding lines, whole characters only, and the view follows" ($s2.lines -ge ($s1.lines + 4) -and $s2.live.streaming -and $s2.text -notmatch "\uFFFD" -and $s2.text -notmatch "`r" -and $s2.sels[0][1] -eq $s2.chars -and ($s2.text -split "connected").Count -eq 2) "lines $($s1.lines) -> $($s2.lines)"
+            $s3 = Doc (J "wb7")
+            Check "[$mode] a stream the server ends and replays on reconnecting is not shown twice" ($s3.lines -eq 6 -and ($s3.text -split "connected").Count -eq 2 -and ($s3.text -split "tick 2 costs").Count -eq 2 -and -not $s3.live.error) "lines=$($s3.lines) streaming=$($s3.live.streaming)"
             Check "[$mode] documents from the web leave no draft files" ((Get-ChildItem "$Out\profile\config\drafts" -Filter *.json -ErrorAction SilentlyContinue).Count -eq 0)
         }
     }

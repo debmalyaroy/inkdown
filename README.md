@@ -196,7 +196,7 @@ platform nobody has used it on. That is why macOS and Linux are labelled *previe
 
 - `make test`: 56 unit tests (text buffer, editing commands, Markdown layout, exports, data
   conversion, log formats, decoding large files in pieces, PDF pages). Run by CI on Windows, macOS and Linux.
-- `pwsh build.ps1 uitest`: 156 end-to-end checks that drive the real window through a
+- `pwsh build.ps1 uitest`: 158 end-to-end checks that drive the real window through a
   scripted input driver in an isolated profile: every mode, multi-cursor editing, the
   designer, drafts after a crash, notes, PDF files, log colours, a large file that grows
   while it is followed, documents and streams from a test web server, exports and

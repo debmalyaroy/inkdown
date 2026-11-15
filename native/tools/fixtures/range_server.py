@@ -33,7 +33,8 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 self.wfile.write(b'2026-11-15T10:00:00.000Z INFO  [stream] connected\n2026-11-15T10:00:00.100Z WARN  [stream] first lines\n')
                 self.wfile.flush()
-                for i in range(40):
+                ticks = int(self.path.split('n=')[1]) if 'n=' in self.path else 40
+                for i in range(ticks):
                     if not os.path.exists(port_file):
                         break
                     time.sleep(0.4)
