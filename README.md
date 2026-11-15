@@ -44,6 +44,25 @@ Checksums for every file are in `SHA256SUMS.txt` on the release page.
 - **Linux.** Unpack the archive and run `./install.sh` (installs to `~/.local`), or run
   `./inkdown` directly.
 
+## Release notes
+
+| Version | Date | What changed | Notes |
+| --- | --- | --- | --- |
+| [1.0.3](https://github.com/debmalyaroy/inkdown/releases/tag/v1.0.3) | 2026-11-15 | Android package signed with a permanent key, so updates install over the old version | [notes](docs/releases/v1.0.3.md) |
+| [1.0.2](https://github.com/debmalyaroy/inkdown/releases/tag/v1.0.2) | 2026-11-15 | Android: working menus, system theme, touch scrolling, file pickers, print, clipboard. Edit menu on every platform | [notes](docs/releases/v1.0.2.md) |
+| [1.0.1](https://github.com/debmalyaroy/inkdown/releases/tag/v1.0.1) | 2026-11-14 | Updater, Help menu, fix for commands on read-only documents, GPL licence | [notes](docs/releases/v1.0.1.md) |
+| [1.0.0](https://github.com/debmalyaroy/inkdown/releases/tag/v1.0.0) | 2026-11-14 | First public release | [notes](docs/releases/v1.0.0.md) |
+
+The full list is in [CHANGELOG.md](CHANGELOG.md).
+
+## Features and roadmap
+
+Every feature is tracked as a GitHub issue:
+
+- **[Roadmap](https://github.com/debmalyaroy/inkdown/issues/22)**: the overview, with what is released and what is planned.
+- **[Released features](https://github.com/debmalyaroy/inkdown/issues?q=is%3Aissue+label%3Ashipped)**: one closed issue per feature, with the version it shipped in.
+- **[Planned work](https://github.com/debmalyaroy/inkdown/issues?q=is%3Aissue+is%3Aopen+label%3Aroadmap)**: open issues, grouped by [milestone](https://github.com/debmalyaroy/inkdown/milestones).
+
 ## What it does
 
 | | |
