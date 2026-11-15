@@ -6,36 +6,59 @@
 #   pwsh tools\uitest.ps1                # debug build
 #   pwsh tools\uitest.ps1 -Release       # release build
 #   pwsh tools\uitest.ps1 -Only editor   # one group
-param([switch]$Release, [string]$Only = "", [string]$Out = "")
+#   pwsh tools/uitest.ps1 -Exe ./inkdown # a binary from somewhere else (Linux: see tools/linux-uitest)
+#
+# Runs on Windows and on Linux (there on a virtual display with software OpenGL, which is
+# why the timing checks and the Windows installer checks are left out on Linux).
+param([switch]$Release, [string]$Only = "", [string]$Out = "", [string]$Exe = "")
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
-$exe = Join-Path $root ("target\" + $(if ($Release) { "release" } else { "debug" }) + "\inkdown.exe")
+$windows = $IsWindows -or $env:OS -eq "Windows_NT"
+$exe = if ($Exe) { (Resolve-Path $Exe).Path } else { Join-Path $root (Join-Path "target" (Join-Path $(if ($Release) { "release" } else { "debug" }) $(if ($windows) { "inkdown.exe" } else { "inkdown" }))) }
 if (-not (Test-Path $exe)) { throw "Build first: $exe not found" }
-if (-not $Out) { $Out = Join-Path $env:TEMP "inkdown-uitest" }
+if (-not $Out) { $Out = Join-Path ([System.IO.Path]::GetTempPath()) "inkdown-uitest" }
 Remove-Item -Recurse -Force $Out -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Force "$Out\work\proj\src", "$Out\export" | Out-Null
+# every path below is written with forward slashes, which Windows accepts as well
 $o = $Out.Replace('\', '/')
 $w = "$o/work"
+New-Item -ItemType Directory -Force "$o/work/proj/src", "$o/export" | Out-Null
+$fixtures = $PSScriptRoot.Replace('\', '/') + "/fixtures"
+
+# A screenshot as something with Width, Height and GetPixel(x, y).R/.G/.B, on any system.
+function Open-Png([string]$file) {
+    if ($windows) {
+        return [System.Drawing.Bitmap]::new($file)
+    }
+    $raw = "$file.rgb"
+    $size = (& python3 -c "import sys; from PIL import Image; im = Image.open(sys.argv[1]).convert('RGB'); open(sys.argv[2], 'wb').write(im.tobytes()); print(im.width, im.height)" $file $raw) -split ' '
+    $bytes = [System.IO.File]::ReadAllBytes($raw)
+    $img = [pscustomobject]@{ Width = [int]$size[0]; Height = [int]$size[1]; Bytes = $bytes }
+    $img | Add-Member ScriptMethod GetPixel { param($x, $y) $i = ($y * $this.Width + $x) * 3; [pscustomobject]@{ R = $this.Bytes[$i]; G = $this.Bytes[$i + 1]; B = $this.Bytes[$i + 2] } }
+    $img | Add-Member ScriptMethod Dispose { }
+    return $img
+}
 
 # ---------------------------------------------------------------- fixtures
-Set-Content "$Out\work\a.rs" "fn alpha() {`n    let foo = 1;`n    let bar = foo + foo;`n}`n" -NoNewline
-Set-Content "$Out\work\list.txt" "one`ntwo`nthree`nfour`nfive`n" -NoNewline
-Set-Content "$Out\work\doc.md" "# Trip plan`n`nPack **light** and bring a *map*.`n`n- [x] Tickets`n- [ ] Hotel`n`n| Day | Place |`n| --- | --- |`n| 1 | Rome |`n`n``````mermaid`nflowchart LR`n  A --> B`n```````n`nMath `$a^2`$ here.`n" -NoNewline
-Set-Content "$Out\work\data.json" '{"name":"ink","items":[1,2,{"deep":true}],"n":null}' -NoNewline
-Set-Content "$Out\work\bad.json" "{`n  `"a`": 1,`n  oops`n}" -NoNewline
-Set-Content "$Out\work\t.csv" "name,qty`napple,3`npear,5`n" -NoNewline
-Copy-Item (Join-Path $root "..\tools\demo\weather-station\data\readings.avro") "$Out\work\readings.avro"
-Set-Content "$Out\work\d.svg" "" -NoNewline
-Set-Content "$Out\work\hello.bat" "@echo hello from build`r`n" -NoNewline
-Set-Content "$Out\work\save.txt" "start`n" -NoNewline
-Set-Content "$Out\work\auto.txt" "start`n" -NoNewline
-Set-Content "$Out\work\proj\src\main.rs" "fn main() {`n    helper_one();`n}`n" -NoNewline
-Set-Content "$Out\work\proj\src\util.rs" "pub fn helper_one() {}`npub fn helper_two() {}`n" -NoNewline
-Set-Content "$Out\work\proj\notes.md" "# Notes`n`nhelper_one is used in main.`n" -NoNewline
+Set-Content "$o/work/a.rs" "fn alpha() {`n    let foo = 1;`n    let bar = foo + foo;`n}`n" -NoNewline
+Set-Content "$o/work/list.txt" "one`ntwo`nthree`nfour`nfive`n" -NoNewline
+Set-Content "$o/work/doc.md" "# Trip plan`n`nPack **light** and bring a *map*.`n`n- [x] Tickets`n- [ ] Hotel`n`n| Day | Place |`n| --- | --- |`n| 1 | Rome |`n`n``````mermaid`nflowchart LR`n  A --> B`n```````n`nMath `$a^2`$ here.`n" -NoNewline
+Set-Content "$o/work/data.json" '{"name":"ink","items":[1,2,{"deep":true}],"n":null}' -NoNewline
+Set-Content "$o/work/bad.json" "{`n  `"a`": 1,`n  oops`n}" -NoNewline
+Set-Content "$o/work/t.csv" "name,qty`napple,3`npear,5`n" -NoNewline
+Copy-Item (Join-Path $root "..\tools\demo\weather-station\data\readings.avro") "$o/work/readings.avro"
+Set-Content "$o/work/d.svg" "" -NoNewline
+# something for the build system to run: a batch file on Windows, a shell script elsewhere
+$hello = if ($windows) { "hello.bat" } else { "hello.sh" }
+Set-Content "$o/work/$hello" $(if ($windows) { "@echo hello from build`r`n" } else { "echo hello from build`n" }) -NoNewline
+Set-Content "$o/work/save.txt" "start`n" -NoNewline
+Set-Content "$o/work/auto.txt" "start`n" -NoNewline
+Set-Content "$o/work/proj/src/main.rs" "fn main() {`n    helper_one();`n}`n" -NoNewline
+Set-Content "$o/work/proj/src/util.rs" "pub fn helper_one() {}`npub fn helper_two() {}`n" -NoNewline
+Set-Content "$o/work/proj/notes.md" "# Notes`n`nhelper_one is used in main.`n" -NoNewline
 $big = [System.Text.StringBuilder]::new()
 for ($i = 0; $i -lt 120000; $i++) { [void]$big.Append("fn item_$i(x: u32) -> u32 { x + $i } // line $i`n") }
-[System.IO.File]::WriteAllText("$Out\work\big.rs", $big.ToString())
+[System.IO.File]::WriteAllText("$o/work/big.rs", $big.ToString())
 
 $script:pass = 0; $script:fail = 0; $script:failed = @()
 function Check([string]$name, [bool]$ok, [string]$detail = "") {
@@ -43,19 +66,24 @@ function Check([string]$name, [bool]$ok, [string]$detail = "") {
     else { $script:fail++; $script:failed += $name; Write-Host "  FAIL $name  $detail" -ForegroundColor Red }
 }
 function Run([string]$name, [string]$body, [switch]$Keep, [string[]]$Files = @()) {
-    if (-not $Keep) { Remove-Item -Recurse -Force "$Out\profile" -ErrorAction SilentlyContinue }
-    Set-Content "$Out\$name.txt" $body
-    $env:INKDOWN_DATA_DIR = "$Out\profile"
-    $env:INKDOWN_AUTOMATION = "$Out\$name.txt"
+    if (-not $Keep) { Remove-Item -Recurse -Force "$o/profile" -ErrorAction SilentlyContinue }
+    Set-Content "$o/$name.txt" $body
+    $env:INKDOWN_DATA_DIR = "$o/profile"
+    $env:INKDOWN_AUTOMATION = "$o/$name.txt"
     $env:INKDOWN_WINDOW = "1280x840"
-    $env:INKDOWN_DIALOG_DIR = "$Out\export"
+    $env:INKDOWN_DIALOG_DIR = "$o/export"
     $p = if ($Files.Count) { Start-Process -FilePath $exe -ArgumentList $Files -PassThru } else { Start-Process -FilePath $exe -PassThru }
     if (-not $p.WaitForExit(120000)) { $p.Kill(); Check "$name finished" $false "timed out" ; return $false }
     return $true
 }
-function J([string]$file) { Get-Content "$Out\$file.json" -Raw | ConvertFrom-Json }
+function J([string]$file) { Get-Content "$o/$file.json" -Raw | ConvertFrom-Json }
 function Doc($j) { $j.docs[$j.active] }
-function Want([string]$group) { -not $Only -or $Only -eq $group }
+# The updater checks are about the Windows installer, and frame times mean nothing when
+# OpenGL is drawn in software, so those two groups run on Windows only.
+function Want([string]$group) {
+    if (-not $windows -and $group -in @("update", "perf")) { return $false }
+    -not $Only -or $Only -eq $group
+}
 
 # ------------------------------------------------------------------ start
 if (Want "start") {
@@ -67,7 +95,7 @@ if (Want "start") {
         Check "document is laid out" ($d.preview_height -gt 2000) "h=$($d.preview_height)"
         Check "welcome tour is not marked unsaved" (-not $d.dirty)
         Check "first frame under 1.5 s" ($j.first_frame_ms -lt 1500) "$($j.first_frame_ms) ms"
-        Check "screenshot written" ((Test-Path "$Out\start.png") -and (Get-Item "$Out\start.png").Length -gt 20000)
+        Check "screenshot written" ((Test-Path "$o/start.png") -and (Get-Item "$o/start.png").Length -gt 20000)
     }
 }
 
@@ -291,7 +319,7 @@ quit
     if (Run "designer" $s) {
         $d = Doc (J "dz1")
         Check "blocks added in the designer become SVG" ($d.text.StartsWith("<svg xmlns") -and $d.text.Contains("inkdown-diagram:"))
-        Check "designer drawing saves to disk" (-not (Doc (J "dz2")).dirty -and (Get-Content "$Out\work\d.svg" -Raw).Contains("inkdown-diagram:"))
+        Check "designer drawing saves to disk" (-not (Doc (J "dz2")).dirty -and (Get-Content "$o/work/d.svg" -Raw).Contains("inkdown-diagram:"))
     }
 }
 
@@ -327,10 +355,10 @@ quit
 "@
     if (Run "files" $s) {
         Check "edits mark the tab unsaved" (Doc (J "f1")).dirty
-        Check "Ctrl+S writes the file" (-not (Doc (J "f2")).dirty -and (Get-Content "$Out\work\save.txt" -Raw) -eq "start`nsaved line")
-        Check "AutoSave writes without Ctrl+S" ((Get-Content "$Out\work\auto.txt" -Raw) -eq "start`nauto line" -and -not (Doc (J "f3")).dirty)
+        Check "Ctrl+S writes the file" (-not (Doc (J "f2")).dirty -and (Get-Content "$o/work/save.txt" -Raw) -eq "start`nsaved line")
+        Check "AutoSave writes without Ctrl+S" ((Get-Content "$o/work/auto.txt" -Raw) -eq "start`nauto line" -and -not (Doc (J "f3")).dirty)
         Check "theme switches" ((J "f4").theme -eq "dracula")
-        Check "settings go to the isolated profile" ((Test-Path "$Out\profile\config\settings.json") -and (Get-Content "$Out\profile\config\settings.json" -Raw).Contains('"dracula"'))
+        Check "settings go to the isolated profile" ((Test-Path "$o/profile/config/settings.json") -and (Get-Content "$o/profile/config/settings.json" -Raw).Contains('"dracula"'))
         # second launch restores the session, including the unsaved draft
         if (Run "session" "wait 20`ndump $o/f6.json`nquit" -Keep) {
             $j = J "f6"
@@ -370,7 +398,7 @@ key ctrl+right
 key f12
 wait 15
 dump $o/p4.json
-open $w/hello.bat
+open $w/$hello
 wait 5
 cmd build
 sleep 2500
@@ -405,12 +433,12 @@ dump $o/x1.json
 quit
 "@
     if (Run "export" $s) {
-        $h = "$Out\export\doc.html"
+        $h = "$o/export/doc.html"
         Check "HTML export" ((Test-Path $h) -and (Get-Content $h -Raw).Contains("<h1 id=`"trip-plan`">Trip plan</h1>"))
         Check "HTML embeds the diagram and math" ((Test-Path $h) -and ([regex]::Matches((Get-Content $h -Raw), "data:image/svg\+xml").Count -ge 2))
-        Check "Word export" ((Test-Path "$Out\export\doc.docx") -and (Get-Item "$Out\export\doc.docx").Length -gt 5000)
-        Check "RTF export" ((Test-Path "$Out\export\doc.rtf") -and (Get-Content "$Out\export\doc.rtf" -TotalCount 1).StartsWith("{\rtf1"))
-        Check "PDF export" ((Test-Path "$Out\export\doc.pdf") -and (Get-Item "$Out\export\doc.pdf").Length -gt 3000)
+        Check "Word export" ((Test-Path "$o/export/doc.docx") -and (Get-Item "$o/export/doc.docx").Length -gt 5000)
+        Check "RTF export" ((Test-Path "$o/export/doc.rtf") -and (Get-Content "$o/export/doc.rtf" -TotalCount 1).StartsWith("{\rtf1"))
+        Check "PDF export" ((Test-Path "$o/export/doc.pdf") -and (Get-Item "$o/export/doc.pdf").Length -gt 3000)
     }
 }
 
@@ -418,9 +446,9 @@ quit
 # Unsaved work must survive however the app ends, and a second launch must not disturb it.
 if (Want "drafts") {
     Write-Host "drafts"
-    Set-Content "$Out\work\kept.txt" "on disk`n" -NoNewline
-    Set-Content "$Out\work\gone.txt" "will be deleted`n" -NoNewline
-    Set-Content "$Out\work\later.md" "# Opened later`n" -NoNewline
+    Set-Content "$o/work/kept.txt" "on disk`n" -NoNewline
+    Set-Content "$o/work/gone.txt" "will be deleted`n" -NoNewline
+    Set-Content "$o/work/later.md" "# Opened later`n" -NoNewline
     $s = @"
 wait 10
 cmd new_file
@@ -441,13 +469,13 @@ dump $o/dr1.json
 crash
 "@
     if (Run "drafts" $s) {
-        Check "drafts are written to disk while the app runs" ((Get-ChildItem "$Out\profile\config\drafts" -Filter *.json -ErrorAction SilentlyContinue).Count -eq 4) "$((Get-ChildItem "$Out\profile\config\drafts" -ErrorAction SilentlyContinue).Count) files"
-        Remove-Item "$Out\work\gone.txt"
+        Check "drafts are written to disk while the app runs" ((Get-ChildItem "$o/profile/config/drafts" -Filter *.json -ErrorAction SilentlyContinue).Count -eq 4) "$((Get-ChildItem "$o/profile/config/drafts" -ErrorAction SilentlyContinue).Count) files"
+        Remove-Item "$o/work/gone.txt"
         if (Run "drafts2" "wait 25`ndump $o/dr2.json`ncmd select_tab_1`ncmd close`nwait 4`nkey escape`ndump $o/dr3.json`nquit" -Keep) {
             $j = J "dr2"; $names = $j.docs.name -join ","
             Check "after a crash, untitled drafts come back" ((($j.docs | Where-Object { $_.text -eq "first draft" }).Count -eq 1) -and (($j.docs | Where-Object { $_.text -eq "second draft" }).Count -eq 1)) $names
             $k = $j.docs | Where-Object { $_.name -eq "kept.txt" }
-            Check "after a crash, unsaved edits to a file come back, and the file is untouched" ($k.text -eq "on disk`nEDITED" -and $k.dirty -and (Get-Content "$Out\work\kept.txt" -Raw) -eq "on disk`n") "$($k.text)"
+            Check "after a crash, unsaved edits to a file come back, and the file is untouched" ($k.text -eq "on disk`nEDITED" -and $k.dirty -and (Get-Content "$o/work/kept.txt" -Raw) -eq "on disk`n") "$($k.text)"
             Check "unsaved edits to a file that was deleted come back as a document" ((($j.docs | Where-Object { $_.text -eq "will be deleted`nCHANGED" }).Count -eq 1)) $names
             Check "the welcome tour does not reappear over restored work" (($j.docs | Where-Object { $_.name -eq "Welcome.md" }).Count -eq 0) $names
         }
@@ -458,20 +486,20 @@ crash
         }
     }
     # a second launch hands its file to the running window instead of opening another
-    Remove-Item -Recurse -Force "$Out\profile" -ErrorAction SilentlyContinue
-    Set-Content "$Out\inst.txt" "wait 10`ncmd new_file`ntype keep me`nsleep 9000`nwait 5`ndump $o/in1.json`nquit"
-    $env:INKDOWN_DATA_DIR = "$Out\profile"; $env:INKDOWN_WINDOW = "1280x840"; $env:INKDOWN_SINGLE_INSTANCE = "1"
-    $env:INKDOWN_AUTOMATION = "$Out\inst.txt"
+    Remove-Item -Recurse -Force "$o/profile" -ErrorAction SilentlyContinue
+    Set-Content "$o/inst.txt" "wait 10`ncmd new_file`ntype keep me`nsleep 9000`nwait 5`ndump $o/in1.json`nquit"
+    $env:INKDOWN_DATA_DIR = "$o/profile"; $env:INKDOWN_WINDOW = "1280x840"; $env:INKDOWN_SINGLE_INSTANCE = "1"
+    $env:INKDOWN_AUTOMATION = "$o/inst.txt"
     $first = Start-Process -FilePath $exe -PassThru
     Start-Sleep 4
     Remove-Item Env:INKDOWN_AUTOMATION
-    $second = Start-Process -FilePath $exe -ArgumentList "`"$Out\work\later.md`"" -PassThru
+    $second = Start-Process -FilePath $exe -ArgumentList "`"$o/work/later.md`"" -PassThru
     $handed = $second.WaitForExit(8000)
     if (-not $handed) { $second.Kill() }
     if (-not $first.WaitForExit(60000)) { $first.Kill() }
     Remove-Item Env:INKDOWN_SINGLE_INSTANCE
     Check "a second launch exits after handing over its file" ($handed -and $second.ExitCode -eq 0) "exited=$handed"
-    if (Test-Path "$Out\in1.json") {
+    if (Test-Path "$o/in1.json") {
         $j = J "in1"
         Check "the running window opens that file and keeps its draft" ((($j.docs | Where-Object { $_.name -eq "later.md" }).Count -eq 1) -and (($j.docs | Where-Object { $_.text -eq "keep me" }).Count -eq 1)) "$($j.docs.name -join ',')"
     } else { Check "the running window opens that file and keeps its draft" $false "no dump" }
@@ -480,10 +508,10 @@ crash
 # ------------------------------------------------------------------ notes
 if (Want "notes") {
     Write-Host "notes"
-    Remove-Item -Recurse -Force "$Out\profile", "$Out\notes" -ErrorAction SilentlyContinue
-    New-Item -ItemType Directory -Force "$Out\profile\config", "$Out\notes\Projects" | Out-Null
-    Set-Content "$Out\profile\config\settings.json" ('{ "notes_folder": "' + "$o/notes" + '" }')
-    Set-Content "$Out\work\loose.md" "# Loose file`n`nSaved somewhere else.`n" -NoNewline
+    Remove-Item -Recurse -Force "$o/profile", "$o/notes" -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force "$o/profile/config", "$o/notes/Projects" | Out-Null
+    Set-Content "$o/profile/config/settings.json" ('{ "notes_folder": "' + "$o/notes" + '" }')
+    Set-Content "$o/work/loose.md" "# Loose file`n`nSaved somewhere else.`n" -NoNewline
     $s = @"
 wait 10
 cmd new_file
@@ -519,23 +547,23 @@ quit
 "@
     if (Run "notes" $s -Keep) {
         $d = Doc (J "nt1")
-        Check "a draft is filed in the Inbox as Markdown, named after its first line" ($d.name -eq "Trip plan.md" -and -not $d.dirty -and (Test-Path "$Out\notes\Inbox\Trip plan.md") -and (Get-Content "$Out\notes\Inbox\Trip plan.md" -Raw).StartsWith("# Trip plan")) "$($d.name) $($d.path)"
-        $inbox = (Get-ChildItem "$Out\notes\Inbox" -ErrorAction SilentlyContinue).Name -join ","
-        Check "File All Drafts files every unsaved draft" ((Test-Path "$Out\notes\Inbox\call the bank before 5.md") -and (Test-Path "$Out\notes\Inbox\Reading list.md") -and (((J "nt2").docs | Where-Object { -not $_.path -and $_.name -ne "Welcome.md" }).Count -eq 0)) $inbox
+        Check "a draft is filed in the Inbox as Markdown, named after its first line" ($d.name -eq "Trip plan.md" -and -not $d.dirty -and (Test-Path "$o/notes/Inbox/Trip plan.md") -and (Get-Content "$o/notes/Inbox/Trip plan.md" -Raw).StartsWith("# Trip plan")) "$($d.name) $($d.path)"
+        $inbox = (Get-ChildItem "$o/notes/Inbox" -ErrorAction SilentlyContinue).Name -join ","
+        Check "File All Drafts files every unsaved draft" ((Test-Path "$o/notes/Inbox/call the bank before 5.md") -and (Test-Path "$o/notes/Inbox/Reading list.md") -and (((J "nt2").docs | Where-Object { -not $_.path -and $_.name -ne "Welcome.md" }).Count -eq 0)) $inbox
         Check "the notebook picker lists Inbox, the notebooks and New notebook" ((((J "nt3").picker.items -join ";") -like "Inbox*Projects*New notebook*")) "$((J 'nt3').picker.items -join ';')"
-        Check "a saved file moves into the chosen notebook" ((Test-Path "$Out\notes\Projects\loose.md") -and -not (Test-Path "$Out\work\loose.md") -and (Doc (J "nt4")).path -like "*Projects*loose.md") "$((Doc (J 'nt4')).path)"
+        Check "a saved file moves into the chosen notebook" ((Test-Path "$o/notes/Projects/loose.md") -and -not (Test-Path "$o/work/loose.md") -and (Doc (J "nt4")).path -like "*Projects*loose.md") "$((Doc (J 'nt4')).path)"
         Check "Browse Notes opens the notes folder in the sidebar" ((J "nt5").folder -like "*notes" -and (J "nt5").sidebar) "$((J 'nt5').folder)"
-        Check "filed notes leave no draft files behind" ((Get-ChildItem "$Out\profile\config\drafts" -Filter *.json -ErrorAction SilentlyContinue).Count -eq 0)
+        Check "filed notes leave no draft files behind" ((Get-ChildItem "$o/profile/config/drafts" -Filter *.json -ErrorAction SilentlyContinue).Count -eq 0)
     }
 }
 
 # -------------------------------------------------------------------- pdf
 if (Want "pdf") {
     Write-Host "pdf"
-    Copy-Item (Join-Path $PSScriptRoot "fixtures\sample.pdf") "$Out\work\sample.pdf" -Force
-    Copy-Item (Join-Path $PSScriptRoot "fixtures\sample.pdf") "$Out\work\renamed.bin" -Force
-    Set-Content "$Out\work\broken.pdf" "%PDF-1.4 this is not really one" -NoNewline
-    $before = (Get-FileHash "$Out\work\sample.pdf").Hash
+    Copy-Item "$fixtures/sample.pdf" "$o/work/sample.pdf" -Force
+    Copy-Item "$fixtures/sample.pdf" "$o/work/renamed.bin" -Force
+    Set-Content "$o/work/broken.pdf" "%PDF-1.4 this is not really one" -NoNewline
+    $before = (Get-FileHash "$o/work/sample.pdf").Hash
     $s = @"
 wait 10
 open $w/sample.pdf
@@ -562,8 +590,7 @@ quit
     if (Run "pdf" $s) {
         $d = Doc (J "pdf1")
         Check "a PDF opens as pages, read-only, in Read mode" ($d.kind -eq "PDF" -and $d.mode -eq "read" -and $d.pdf_pages -eq 3 -and $d.read_only -and -not $d.pdf_error) "$($d.kind) pages=$($d.pdf_pages) $($d.pdf_error)"
-        Add-Type -AssemblyName System.Drawing
-        $bmp = [System.Drawing.Bitmap]::new("$Out\pdf1.png")
+        $bmp = Open-Png "$o/pdf1.png"
         $white = 0; $blue = 0
         for ($x = 300; $x -lt $bmp.Width; $x += 7) { for ($y = 120; $y -lt $bmp.Height - 60; $y += 7) {
             $c = $bmp.GetPixel($x, $y)
@@ -573,12 +600,12 @@ quit
         $bmp.Dispose()
         Check "the page is drawn: white paper with its blue bar" ($white -gt 2000 -and $blue -gt 20) "white=$white blue=$blue"
         Check "scrolling moves to a later page" ((Doc (J "pdf2")).pdf_page -ge 2) "page=$((Doc (J 'pdf2')).pdf_page)"
-        Check "the PDF file is never rewritten" ((Get-FileHash "$Out\work\sample.pdf").Hash -eq $before)
+        Check "the PDF file is never rewritten" ((Get-FileHash "$o/work/sample.pdf").Hash -eq $before)
         Check "a PDF under another name is recognised" ((Doc (J "pdf3")).kind -eq "PDF" -and (Doc (J "pdf3")).pdf_pages -eq 3) "$((Doc (J 'pdf3')).kind)"
         Check "a damaged PDF gives a message, not a crash" ([bool](Doc (J "pdf4")).pdf_error) "$((Doc (J 'pdf4')).pdf_error)"
     }
     # the text of a PDF: search, selection, and a file protected by a password
-    Copy-Item (Join-Path $PSScriptRoot "fixtures\locked.pdf") "$Out\work\locked.pdf" -Force
+    Copy-Item "$fixtures/locked.pdf" "$o/work/locked.pdf" -Force
     $s = @"
 wait 10
 open $w/sample.pdf
@@ -642,7 +669,7 @@ quit
 # work comes back on the next start; it asks only about what could not be kept.
 if (Want "closing") {
     Write-Host "closing"
-    Set-Content "$Out\work\c1.txt" "saved text`n" -NoNewline
+    Set-Content "$o/work/c1.txt" "saved text`n" -NoNewline
     $s = @"
 wait 10
 open $w/c1.txt
@@ -663,16 +690,16 @@ quit
 "@
     $closed = Run "closing" $s
     Check "closing a tab with unsaved changes asks first" ((J "cl1").dialog_kind -eq "ConfirmClose") "$((J 'cl1').dialog_kind)"
-    Check "closing the window does not ask: the work is kept for the next start" ($closed -and -not (Test-Path "$Out\cl-still-open.json") -and (Get-ChildItem "$Out\profile\config\drafts" -Filter *.json).Count -eq 2) "drafts=$((Get-ChildItem "$Out\profile\config\drafts" -Filter *.json -ErrorAction SilentlyContinue).Count)"
+    Check "closing the window does not ask: the work is kept for the next start" ($closed -and -not (Test-Path "$o/cl-still-open.json") -and (Get-ChildItem "$o/profile/config/drafts" -Filter *.json).Count -eq 2) "drafts=$((Get-ChildItem "$o/profile/config/drafts" -Filter *.json -ErrorAction SilentlyContinue).Count)"
     if (Run "closing2" "wait 25`ndump $o/cl2.json`nquit" -Keep) {
         $j = J "cl2"
         Check "and it is there again afterwards" ((($j.docs | Where-Object { $_.text -eq "a draft" }).Count -eq 1) -and (($j.docs | Where-Object { $_.name -eq "c1.txt" -and $_.dirty -and $_.text -eq "saved text`nEDIT" }).Count -eq 1)) "$($j.docs.name -join ',')"
     }
     # with drafts switched off there is nothing to come back to, so the window asks
-    Remove-Item -Recurse -Force "$Out\profile" -ErrorAction SilentlyContinue
-    New-Item -ItemType Directory -Force "$Out\profile\config" | Out-Null
-    Set-Content "$Out\profile\config\settings.json" '{ "hot_exit": false }'
-    Remove-Item "$Out\cl3.json", "$Out\cl4.json" -ErrorAction SilentlyContinue
+    Remove-Item -Recurse -Force "$o/profile" -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force "$o/profile/config" | Out-Null
+    Set-Content "$o/profile/config/settings.json" '{ "hot_exit": false }'
+    Remove-Item "$o/cl3.json", "$o/cl4.json" -ErrorAction SilentlyContinue
     $s = @"
 wait 10
 open $w/c1.txt
@@ -690,7 +717,7 @@ quit
 "@
     if (Run "closing3" $s -Keep) {
         Check "the window asks when unsaved work could not be kept" ((J "cl3").dialog_kind -eq "ConfirmQuit") "$((J 'cl3').dialog_kind)"
-        Check "Cancel keeps the window and the text" (-not (J "cl4").dialog -and (Doc (J "cl4")).text -eq "saved text`nEDITMORE".Replace("EDIT", "") -and (Get-Content "$Out\work\c1.txt" -Raw) -eq "saved text`n") "$((Doc (J 'cl4')).text)"
+        Check "Cancel keeps the window and the text" (-not (J "cl4").dialog -and (Doc (J "cl4")).text -eq "saved text`nEDITMORE".Replace("EDIT", "") -and (Get-Content "$o/work/c1.txt" -Raw) -eq "saved text`n") "$((Doc (J 'cl4')).text)"
     }
 }
 
@@ -706,15 +733,14 @@ if (Want "logs") {
         "`tat com.example.Main.run(Main.java:10)",
         "2026-11-15T10:00:04.000Z TRACE [main] tick"
     )
-    Set-Content "$Out\work\app.log" ($lines -join "`n") -NoNewline
-    Set-Content "$Out\work\service-output.txt" ($lines -join "`n") -NoNewline
-    Set-Content "$Out\work\plain.txt" "Just some INFO for you`nand an ERROR in prose`n" -NoNewline
+    Set-Content "$o/work/app.log" ($lines -join "`n") -NoNewline
+    Set-Content "$o/work/service-output.txt" ($lines -join "`n") -NoNewline
+    Set-Content "$o/work/plain.txt" "Just some INFO for you`nand an ERROR in prose`n" -NoNewline
     if (Run "logs" "open $w/app.log`nwait 25`ndump $o/lg1.json`nshot $o/lg1.png`nopen $w/service-output.txt`nwait 15`ndump $o/lg2.json`nopen $w/plain.txt`nwait 15`ndump $o/lg3.json`nquit") {
         Check "a .log file uses the log colouring" ((Doc (J "lg1")).syntax -eq "log") "$((Doc (J 'lg1')).syntax)"
         Check "a file that reads like a log is coloured as one, whatever its name" ((Doc (J "lg2")).syntax -eq "log") "$((Doc (J 'lg2')).syntax)"
         Check "ordinary text is not mistaken for a log" ((Doc (J "lg3")).syntax -ne "log") "$((Doc (J 'lg3')).syntax)"
-        Add-Type -AssemblyName System.Drawing
-        $bmp = [System.Drawing.Bitmap]::new("$Out\lg1.png")
+        $bmp = Open-Png "$o/lg1.png"
         # count strongly red, amber and green pixels in the text area
         $red = 0; $amber = 0; $green = 0
         for ($x = 100; $x -lt 900; $x += 2) { for ($y = 100; $y -lt 300; $y += 1) {
@@ -734,27 +760,27 @@ if (Want "bigfile") {
     Write-Host "bigfile"
     $line = "2026-11-15T10:00:00.000Z INFO  [worker-3] com.example.service.Handler - request completed status=200 path=/api/v1/orders/123 duration=45ms`n"
     $block = [System.Text.Encoding]::UTF8.GetBytes($line * 8000)
-    $big = "$Out\work\big.log"
+    $big = "$o/work/big.log"
     $fs = [System.IO.File]::Create($big)
     $count = 0
     while ($fs.Length -lt 30MB) { $fs.Write($block, 0, $block.Length); $count += 8000 }
     $fs.Close()
-    Remove-Item "$Out\bg1.json", "$Out\bg2.json" -ErrorAction SilentlyContinue
-    Remove-Item -Recurse -Force "$Out\profile" -ErrorAction SilentlyContinue
-    Set-Content "$Out\bigfile.txt" "open $w/big.log`nwait 1`ndump $o/bg0.json`nsleep 4000`nwait 5`ncmd toggle_follow`nwait 3`ndump $o/bg1.json`nsleep 5000`nwait 5`ndump $o/bg2.json`nquit"
-    $env:INKDOWN_DATA_DIR = "$Out\profile"; $env:INKDOWN_WINDOW = "1280x840"; $env:INKDOWN_AUTOMATION = "$Out\bigfile.txt"
+    Remove-Item "$o/bg1.json", "$o/bg2.json" -ErrorAction SilentlyContinue
+    Remove-Item -Recurse -Force "$o/profile" -ErrorAction SilentlyContinue
+    Set-Content "$o/bigfile.txt" "open $w/big.log`nwait 1`ndump $o/bg0.json`nsleep 4000`nwait 5`ncmd toggle_follow`nwait 3`ndump $o/bg1.json`nsleep 5000`nwait 5`ndump $o/bg2.json`nquit"
+    $env:INKDOWN_DATA_DIR = "$o/profile"; $env:INKDOWN_WINDOW = "1280x840"; $env:INKDOWN_AUTOMATION = "$o/bigfile.txt"
     $p = Start-Process -FilePath $exe -PassThru
     $t0 = Get-Date
-    while (-not (Test-Path "$Out\bg1.json") -and ((Get-Date) - $t0).TotalSeconds -lt 60) { Start-Sleep -Milliseconds 200 }
+    while (-not (Test-Path "$o/bg1.json") -and ((Get-Date) - $t0).TotalSeconds -lt 60) { Start-Sleep -Milliseconds 200 }
     Start-Sleep -Milliseconds 300
     $peak = 0; try { $p.Refresh(); $peak = $p.PeakWorkingSet64 / 1MB } catch {}
     Add-Content -Path $big -Value "2026-11-15T11:00:00.000Z ERROR [worker-1] appended one`n2026-11-15T11:00:01.000Z WARN  [worker-1] appended two`n" -NoNewline
     if (-not $p.WaitForExit(60000)) { $p.Kill() }
-    if ((Test-Path "$Out\bg1.json") -and (Test-Path "$Out\bg2.json")) {
+    if ((Test-Path "$o/bg1.json") -and (Test-Path "$o/bg2.json")) {
         $a = Doc (J "bg0"); $b = Doc (J "bg1"); $c = Doc (J "bg2")
         Check "a large file gets its tab at once and is read in the background" ($a.name -eq "big.log" -and $b.lines -eq ($count + 1) -and -not $b.live.loading -and -not $b.read_only -and -not $b.dirty) "first: loading=$($a.live.loading) lines=$($a.lines); then lines=$($b.lines) of $($count + 1)"
         Check "it is recognised and coloured as a log" ($b.syntax -eq "log") "$($b.syntax)"
-        Check "reading it takes far less memory than three times its size" ($peak -gt 0 -and $peak -lt 30 * 2.2 + 130) ("peak {0:N0} MB for a 30 MB file" -f $peak)
+        if ($windows) { Check "reading it takes far less memory than three times its size" ($peak -gt 0 -and $peak -lt 30 * 2.2 + 130) ("peak {0:N0} MB for a 30 MB file" -f $peak) }
         Check "lines added to a followed file appear, without a reload" ($c.lines -eq ($count + 3) -and $c.live.updates -eq ($b.live.updates + 1) -and -not $c.dirty) "lines=$($c.lines) updates=$($b.live.updates)->$($c.live.updates)"
         Check "while following, the caret stays at the end" ($c.sels[0][1] -eq $c.chars -and $c.live.follow) "caret=$($c.sels[0][1]) chars=$($c.chars)"
     } else { Check "large file run produced its dumps" $false "missing" }
@@ -765,32 +791,32 @@ if (Want "bigfile") {
 # Documents from a web address, served by a test server on 127.0.0.1.
 if (Want "web") {
     Write-Host "web"
-    $py = (Get-Command python -ErrorAction SilentlyContinue).Source
+    $py = (Get-Command python, python3 -ErrorAction SilentlyContinue | Select-Object -First 1).Source
     if (-not $py) { Write-Host "  skipped: python is needed for the test web server" }
     else {
         foreach ($mode in @("range", "plain")) {
-            Remove-Item -Recurse -Force "$Out\web", "$Out\profile" -ErrorAction SilentlyContinue
-            New-Item -ItemType Directory -Force "$Out\web", "$Out\profile\config" | Out-Null
-            Set-Content "$Out\profile\config\settings.json" '{ "live_refresh_seconds": 1 }'
-            Set-Content "$Out\web\app.log" "2026-11-15T10:00:00.000Z INFO  [main] started`n2026-11-15T10:00:01.000Z WARN  [main] slow`n" -NoNewline
-            Set-Content "$Out\web\README.md" "# Served`n`nFrom the test server.`n" -NoNewline
-            Remove-Item "$Out\port.txt", "$Out\wb1.json" -ErrorAction SilentlyContinue
-            $srvArgs = @("`"$PSScriptRoot\fixtures\range_server.py`"", "`"$Out\web`"", "`"$Out\port.txt`"")
+            Remove-Item -Recurse -Force "$o/web", "$o/profile" -ErrorAction SilentlyContinue
+            New-Item -ItemType Directory -Force "$o/web", "$o/profile/config" | Out-Null
+            Set-Content "$o/profile/config/settings.json" '{ "live_refresh_seconds": 1 }'
+            Set-Content "$o/web/app.log" "2026-11-15T10:00:00.000Z INFO  [main] started`n2026-11-15T10:00:01.000Z WARN  [main] slow`n" -NoNewline
+            Set-Content "$o/web/README.md" "# Served`n`nFrom the test server.`n" -NoNewline
+            Remove-Item "$o/port.txt", "$o/wb1.json" -ErrorAction SilentlyContinue
+            $srvArgs = @("`"$fixtures/range_server.py`"", "`"$o/web`"", "`"$o/port.txt`"")
             if ($mode -eq "plain") { $srvArgs += "--no-range" }
-            $srv = Start-Process -FilePath $py -ArgumentList $srvArgs -PassThru -WindowStyle Hidden
+            $srv = if ($windows) { Start-Process -FilePath $py -ArgumentList $srvArgs -PassThru -WindowStyle Hidden } else { Start-Process -FilePath $py -ArgumentList $srvArgs -PassThru }
             $t0 = Get-Date
-            while (-not (Test-Path "$Out\port.txt") -and ((Get-Date) - $t0).TotalSeconds -lt 15) { Start-Sleep -Milliseconds 100 }
+            while (-not (Test-Path "$o/port.txt") -and ((Get-Date) - $t0).TotalSeconds -lt 15) { Start-Sleep -Milliseconds 100 }
             Start-Sleep -Milliseconds 200
-            $port = (Get-Content "$Out\port.txt" -Raw).Trim()
+            $port = (Get-Content "$o/port.txt" -Raw).Trim()
             $u = "http://127.0.0.1:$port"
-            Set-Content "$Out\web.txt" "cmd open_url $u/app.log`nsleep 2500`nwait 5`ndump $o/wb1.json`nsleep 5000`nwait 5`ndump $o/wb2.json`ntype typed`nwait 3`ncmd open_url $u/README.md`nsleep 2000`nwait 5`ndump $o/wb3.json`ncmd open_url $u/missing.txt`nsleep 2000`nwait 5`ndump $o/wb4.json`ncmd open_url $u/stream.log`nsleep 2600`nwait 5`ndump $o/wb5.json`nsleep 2600`nwait 5`ndump $o/wb6.json`ncmd open_url $u/stream.log?n=3`nsleep 9000`nwait 5`ndump $o/wb7.json`nquit"
-            $env:INKDOWN_DATA_DIR = "$Out\profile"; $env:INKDOWN_WINDOW = "1280x840"; $env:INKDOWN_AUTOMATION = "$Out\web.txt"
+            Set-Content "$o/web.txt" "cmd open_url $u/app.log`nsleep 2500`nwait 5`ndump $o/wb1.json`nsleep 5000`nwait 5`ndump $o/wb2.json`ntype typed`nwait 3`ncmd open_url $u/README.md`nsleep 2000`nwait 5`ndump $o/wb3.json`ncmd open_url $u/missing.txt`nsleep 2000`nwait 5`ndump $o/wb4.json`ncmd open_url $u/stream.log`nsleep 2600`nwait 5`ndump $o/wb5.json`nsleep 2600`nwait 5`ndump $o/wb6.json`ncmd open_url $u/stream.log?n=3`nsleep 9000`nwait 5`ndump $o/wb7.json`nquit"
+            $env:INKDOWN_DATA_DIR = "$o/profile"; $env:INKDOWN_WINDOW = "1280x840"; $env:INKDOWN_AUTOMATION = "$o/web.txt"
             $p = Start-Process -FilePath $exe -PassThru
             $t0 = Get-Date
-            while (-not (Test-Path "$Out\wb1.json") -and ((Get-Date) - $t0).TotalSeconds -lt 60) { Start-Sleep -Milliseconds 200 }
-            Add-Content -Path "$Out\web\app.log" -Value "2026-11-15T10:00:02.000Z ERROR [main] added on the server`n" -NoNewline
+            while (-not (Test-Path "$o/wb1.json") -and ((Get-Date) - $t0).TotalSeconds -lt 60) { Start-Sleep -Milliseconds 200 }
+            Add-Content -Path "$o/web/app.log" -Value "2026-11-15T10:00:02.000Z ERROR [main] added on the server`n" -NoNewline
             if (-not $p.WaitForExit(60000)) { $p.Kill() }
-            Remove-Item "$Out\port.txt" -ErrorAction SilentlyContinue
+            Remove-Item "$o/port.txt" -ErrorAction SilentlyContinue
             if (-not $srv.WaitForExit(5000)) { $srv.Kill() }
             $a = Doc (J "wb1"); $b = (J "wb2").docs | Where-Object { $_.name -eq "app.log" }
             Check "[$mode] a web address opens as a read-only document, coloured as a log and followed" ($a.name -eq "app.log" -and $a.live.url -eq "$u/app.log" -and $a.read_only -and $a.syntax -eq "log" -and $a.live.follow -and $a.lines -eq 3 -and -not $a.live.error) "$($a.name) lines=$($a.lines) syntax=$($a.syntax) err=$($a.live.error)"
@@ -806,7 +832,7 @@ if (Want "web") {
             Check "[$mode] the stream keeps adding lines, whole characters only, and the view follows" ($s2.lines -ge ($s1.lines + 4) -and $s2.live.streaming -and $s2.text -notmatch "\uFFFD" -and $s2.text -notmatch "`r" -and $s2.sels[0][1] -eq $s2.chars -and ($s2.text -split "connected").Count -eq 2) "lines $($s1.lines) -> $($s2.lines)"
             $s3 = Doc (J "wb7")
             Check "[$mode] a stream the server ends and replays on reconnecting is not shown twice" ($s3.lines -eq 6 -and ($s3.text -split "connected").Count -eq 2 -and ($s3.text -split "tick 2 costs").Count -eq 2 -and -not $s3.live.error) "lines=$($s3.lines) streaming=$($s3.live.streaming)"
-            Check "[$mode] documents from the web leave no draft files" ((Get-ChildItem "$Out\profile\config\drafts" -Filter *.json -ErrorAction SilentlyContinue).Count -eq 0)
+            Check "[$mode] documents from the web leave no draft files" ((Get-ChildItem "$o/profile/config/drafts" -Filter *.json -ErrorAction SilentlyContinue).Count -eq 0)
         }
     }
 }
@@ -815,11 +841,11 @@ if (Want "web") {
 # Every item of the main menu, its submenus and the toolbar, by command and by click.
 if (Want "menus") {
     Write-Host "menus"
-    Set-Content "$Out\work\menu.md" "# Menu test`n`nSome ``code`` and a list:`n`n1. one`n1. two`n`n| a | b |`n|---|---|`n| 1 | 22222 |`n`n## Section`n`nText.`n" -NoNewline
-    Set-Content "$Out\work\menu2.txt" "second`n" -NoNewline
-    Set-Content "$Out\work\flow.mmd" "flowchart LR`n  A --> B`n" -NoNewline
-    $env:INKDOWN_DIALOG_OPEN = "$Out\work\menu2.txt"
-    $env:INKDOWN_DIALOG_FOLDER = "$Out\work\proj"
+    Set-Content "$o/work/menu.md" "# Menu test`n`nSome ``code`` and a list:`n`n1. one`n1. two`n`n| a | b |`n|---|---|`n| 1 | 22222 |`n`n## Section`n`nText.`n" -NoNewline
+    Set-Content "$o/work/menu2.txt" "second`n" -NoNewline
+    Set-Content "$o/work/flow.mmd" "flowchart LR`n  A --> B`n" -NoNewline
+    $env:INKDOWN_DIALOG_OPEN = "$o/work/menu2.txt"
+    $env:INKDOWN_DIALOG_FOLDER = "$o/work/proj"
     $env:INKDOWN_UPDATE_URL = "http://127.0.0.1:9/none.json"   # nothing listens here: the check fails at once
     $s = @"
 wait 10
@@ -1001,7 +1027,7 @@ quit
         Check "File > Open opens the chosen file" ((Doc (J "mn4")).name -eq "menu2.txt")
         Check "File > Open Folder shows the folder" ((J "mn5").folder -like "*proj" -and (J "mn5").sidebar)
         Check "File > Open Recent lists recent files" ((J "mn6").picker.items.Count -ge 1 -and (((J "mn6").picker.items -join ";") -like "*menu*")) "$((J 'mn6').picker.items -join ';')"
-        Check "File > Save As writes the file" ((Test-Path "$Out\export\menu.md") -and -not (Doc (J "mn7")).dirty) "$((Doc (J 'mn7')).path)"
+        Check "File > Save As writes the file" ((Test-Path "$o/export/menu.md") -and -not (Doc (J "mn7")).dirty) "$((Doc (J 'mn7')).path)"
         Check "Export > Copy as HTML" (((J "mn8").launched -join ";") -like "*copy:<h1*") "$((J 'mn8').launched -join ';')"
         Check "Export > Copy as Rich Text" (((J "mn9").launched -join ";") -like "*copy:Menu test*" -and ((J "mn9").toasts -join ";") -notlike "*Could not copy*") "$((J 'mn9').toasts -join ';')"
         Check "Export > Google Docs asks to connect first" ((J "mn10").dialog -or (((J "mn10").toasts -join ";") -match "Google|connect|Integrations")) "$((J 'mn10').dialog_kind) $((J 'mn10').toasts -join ';')"
@@ -1032,7 +1058,7 @@ quit
         Check "New Window, Show in File Manager and Print reach the system" ($l -like "*new-window*" -and $l -like "*reveal:*menu2.txt*" -and $l -like "*-print.html*") $l
         Check "Help > Check for Updates opens the update dialog" ((J "mn31").dialog_kind -eq "Update" -and (J "mn31").update -in "checking", "failed") "$((J 'mn31').dialog_kind) $((J 'mn31').update)"
         Check "Help > Welcome Tour" ((Doc (J "mn32")).name -eq "Welcome.md")
-        Check "Export > Diagram as SVG and PNG" ((Test-Path "$Out\export\flow.svg") -and (Test-Path "$Out\export\flow.png") -and (Get-Item "$Out\export\flow.png").Length -gt 500) "$((J 'mn33').toasts -join ';')"
+        Check "Export > Diagram as SVG and PNG" ((Test-Path "$o/export/flow.svg") -and (Test-Path "$o/export/flow.png") -and (Get-Item "$o/export/flow.png").Length -gt 500) "$((J 'mn33').toasts -join ';')"
     }
     # the toolbar and the menus themselves, by clicking them
     $s = @"
@@ -1081,7 +1107,7 @@ quit
         Check "toolbar: AutoSave switch" ((J "tb6").auto_save)
         Check "toolbar: search button opens Goto Anything" ($null -ne (J "tb7").picker)
         Check "toolbar: theme button" ((J "tb8").theme -ne (J "tb1").theme -or $null -ne (J "tb8").picker) "$((J 'tb8').theme)"
-        Check "menu button opens the main menu" ((Test-Path "$Out\menu-open.png"))
+        Check "menu button opens the main menu" ((Test-Path "$o/menu-open.png"))
     }
     Remove-Item Env:INKDOWN_DIALOG_OPEN, Env:INKDOWN_DIALOG_FOLDER, Env:INKDOWN_UPDATE_URL -ErrorAction SilentlyContinue
 }
@@ -1090,7 +1116,7 @@ quit
 # A tiny local web server stands in for GitHub Releases (127.0.0.1 only, random port).
 if (Want "update") {
     Write-Host "update"
-    $site = "$Out\site"
+    $site = "$o/site"
     New-Item -ItemType Directory -Force $site | Out-Null
     $probe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
     $probe.Start(); $port = $probe.LocalEndpoint.Port; $probe.Stop()

@@ -43,6 +43,38 @@ jobs:
       - name: Build the application
         working-directory: native
         run: cargo build --locked
+      # the Linux build, for the UI checks below and for testing by hand
+      - name: Keep the Linux build
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: inkdown-linux
+          path: native/target/debug/inkdown
+          retention-days: 14
+
+  linux-ui:
+    name: UI checks (Linux, in a container)
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: inkdown-linux
+          path: dist/linux
+      - name: Build the test container
+        run: docker build -t inkdown-linux-uitest packaging/linux/uitest
+      - name: Run the UI checks on a virtual display
+        run: |
+          mkdir -p dist/linux-uitest
+          docker run --rm --shm-size=512m -v "$PWD:/src:ro" -v "$PWD/dist/linux:/app:ro" -v "$PWD/dist/linux-uitest:/out" inkdown-linux-uitest
+      - name: Keep screenshots and state dumps when a check fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-uitest-output
+          path: dist/linux-uitest
+          retention-days: 7
 
   android-check:
     name: Type-check (Android)

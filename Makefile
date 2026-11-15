@@ -26,7 +26,7 @@ endif
 
 BIN := $(NATIVE)/target/release/inkdown$(EXE)
 
-.PHONY: all build release run test check uitest package windows macos linux android msix clean version help
+.PHONY: all build release run test check uitest linux-uitest package windows macos linux android msix clean version help
 
 all: release
 
@@ -38,6 +38,7 @@ help:
 	@echo "  make test       unit tests"
 	@echo "  make check      type-check only"
 	@echo "  make uitest     UI regression suite (Windows, needs pwsh)"
+	@echo "  make linux-uitest  the same suite for the Linux build, in a Docker container"
 	@echo "  make package    package for this OS into dist/"
 	@echo "  make windows    dist/Inkdown-Setup.exe and dist/inkdown.exe"
 	@echo "  make msix       Microsoft Store package (Windows SDK needed)"
@@ -80,6 +81,10 @@ msix: release
 
 macos:
 	sh packaging/macos/build.sh
+
+# Runs the UI suite against dist/linux/inkdown in a container with a virtual display.
+linux-uitest:
+	pwsh packaging/linux/uitest.ps1
 
 linux: release
 	sh packaging/linux/make-tarball.sh
