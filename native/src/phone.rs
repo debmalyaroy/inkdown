@@ -74,7 +74,8 @@ pub fn top_bar(ui: &mut Ui, app: &mut InkApp) {
                     app.overlay_opened = app.frame_count;
                 }
                 if icon_tap(ui, &pal, icons::SEARCH, pal.text).clicked() {
-                    app.pending.push("goto_anything".into());
+                    // on a phone the magnifier means: find in what I am reading
+                    app.pending.push("show_find".into());
                 }
                 // the title takes what is left
                 let (name, sub, dirty) = match app.docs.get(app.active) {

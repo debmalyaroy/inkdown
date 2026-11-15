@@ -90,8 +90,12 @@ pub fn file_doc(app: &mut InkApp, ix: usize, notebook: &str) -> Result<PathBuf, 
     }
     let old = d.path.clone();
     let name = match &old {
-        // keep the name of a file that already has one
-        Some(p) => p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default(),
+        // keep the name of a file that already has one, unless it never got a real one
+        Some(p) => {
+            let stem = p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+            let from_text = title_of(&d.buf.text());
+            if stem.to_lowercase().starts_with("untitled") && !from_text.is_empty() { from_text } else { stem }
+        }
         None => title_of(&d.buf.text()),
     };
     let name = if name.is_empty() { untitled_name() } else { name };
