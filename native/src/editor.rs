@@ -45,6 +45,87 @@ pub struct Find {
     pub error: Option<String>,
     key: (u64, String, bool, bool, bool, Option<(usize, usize)>),
     pub focus: bool,
+    /// A large document is searched on another thread; matches arrive in order.
+    job: Option<std::sync::mpsc::Receiver<Vec<(usize, usize)>>>,
+    generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    /// True while the search of a large document is still running.
+    pub searching: bool,
+    /// More matches exist than are kept.
+    pub capped: bool,
+    /// Replace All was asked for while the search was still running.
+    pub replace_pending: bool,
+}
+
+/// Documents with more text than this are searched in the background.
+pub const FIND_IN_BACKGROUND_FROM: usize = 4 << 20;
+/// The most matches kept for one search.
+pub const FIND_MATCH_LIMIT: usize = 5_000_000;
+
+/// Searches `rope` between two char positions in pieces of whole lines and hands the
+/// matches (char ranges, in order) to `each` piece by piece. `each` returns false to stop.
+pub fn scan_rope(rope: &ropey::Rope, re: &crate::rx::Pattern, lo: usize, hi: usize, mut each: impl FnMut(Vec<(usize, usize)>) -> bool) {
+    const PIECE: usize = 4 << 20;
+    let slice = rope.slice(lo.min(rope.len_chars())..hi.min(rope.len_chars()));
+    let lines = slice.len_lines();
+    let bytes = slice.len_bytes();
+    let mut line = 0;
+    let mut text = String::new();
+    while line < lines {
+        // a piece ends at the end of a line, so a match is never cut in two
+        let from_byte = slice.line_to_byte(line);
+        let to_line = if from_byte + PIECE >= bytes { lines } else { (slice.byte_to_line(from_byte + PIECE) + 1).min(lines) };
+        let (c0, c1) = (slice.line_to_char(line), if to_line >= lines { slice.len_chars() } else { slice.line_to_char(to_line) });
+        text.clear();
+        for chunk in slice.slice(c0..c1).chunks() {
+            text.push_str(chunk);
+        }
+        let ascii = text.is_ascii();
+        let mut found = Vec::new();
+        // byte and char position of the place counted up to, for text that is not ASCII
+        let (mut at_byte, mut at_char) = (0usize, 0usize);
+        re.scan(&text, |start, end| {
+            if start != end {
+                if ascii {
+                    found.push((lo + c0 + start, lo + c0 + end));
+                } else {
+                    at_char += text[at_byte..start].chars().count();
+                    let len = text[start..end].chars().count();
+                    found.push((lo + c0 + at_char, lo + c0 + at_char + len));
+                    at_char += len;
+                    at_byte = end;
+                }
+            }
+            true
+        });
+        if !each(found) {
+            return;
+        }
+        line = to_line;
+    }
+}
+
+impl Find {
+    /// Takes in what the background search has found since the last look.
+    fn collect(&mut self) {
+        let Some(rx) = &self.job else { return };
+        loop {
+            match rx.try_recv() {
+                Ok(batch) => {
+                    let room = FIND_MATCH_LIMIT.saturating_sub(self.matches.len());
+                    if batch.len() > room {
+                        self.capped = true;
+                    }
+                    self.matches.extend(batch.into_iter().take(room));
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => return,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.job = None;
+                    self.searching = false;
+                    return;
+                }
+            }
+        }
+    }
 }
 
 impl Find {
@@ -59,11 +140,17 @@ impl Find {
     pub fn update(&mut self, buf: &Buffer) {
         let key = (buf.version, self.query.clone(), self.regex, self.case, self.word, if self.in_selection { self.scope } else { None });
         if key == self.key {
+            self.collect();
             return;
         }
         self.key = key;
         self.matches.clear();
         self.error = None;
+        // whatever was being searched for is out of date
+        self.generation.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.job = None;
+        self.searching = false;
+        self.capped = false;
         if self.query.is_empty() {
             return;
         }
@@ -74,6 +161,29 @@ impl Find {
                 return;
             }
         };
+        if buf.rope.len_bytes() > FIND_IN_BACKGROUND_FROM {
+            // a large document: search a snapshot on another thread, piece by piece
+            let (lo, hi) = match (self.in_selection, self.scope) {
+                (true, Some((a, z))) => (a.min(buf.len()), z.min(buf.len())),
+                _ => (0, buf.len()),
+            };
+            let rope = buf.rope.clone(); // cheap: ropes share their data
+            let shared = self.generation.clone();
+            let mine = shared.load(std::sync::atomic::Ordering::Relaxed);
+            let (tx, rx) = std::sync::mpsc::channel();
+            let spawned = std::thread::Builder::new().name("ink-find".into()).spawn(move || {
+                let mut total = 0usize;
+                scan_rope(&rope, &re, lo, hi, |found| {
+                    total += found.len();
+                    shared.load(std::sync::atomic::Ordering::Relaxed) == mine && tx.send(found).is_ok() && total <= FIND_MATCH_LIMIT
+                });
+            });
+            if spawned.is_ok() {
+                self.job = Some(rx);
+                self.searching = true;
+            }
+            return;
+        }
         let text = buf.text();
         let (lo, hi) = match (self.in_selection, self.scope) {
             (true, Some((a, z))) => (buf.rope.char_to_byte(a.min(buf.len())), buf.rope.char_to_byte(z.min(buf.len()))),
@@ -239,6 +349,74 @@ pub fn wrap_breaks(text: &str, cols: usize, tab: usize) -> Vec<usize> {
     out
 }
 
+/// Number of visual rows a line takes when wrapped: the length of [`wrap_breaks`] for
+/// the same text, worked out without building it (this runs for every line of a file).
+pub fn wrap_rows(line: ropey::RopeSlice<'_>, cols: usize, tab: usize) -> u32 {
+    // half as many chars as columns always fit, even if every one is double width
+    if cols < 8 || line.len_chars() <= cols / 2 {
+        return 1;
+    }
+    let mut rows = 1u32;
+    let mut v = 0usize;
+    // cells taken by the word at the end of the row (what moves down when the row breaks at a space)
+    let mut word = 0usize;
+    let mut has_space = false;
+    let mut in_row = 0usize;
+    for c in line.chars() {
+        if c == '\n' || c == '\r' {
+            continue;
+        }
+        loop {
+            let w = if c == '\t' { tab - v % tab } else { char_cells(c) };
+            if v + w > cols && in_row > 0 {
+                rows += 1;
+                if has_space {
+                    // the row ends after its last space; the word after it starts the next row
+                    v = word;
+                    in_row = usize::from(word > 0);
+                } else {
+                    v = 0;
+                    in_row = 0;
+                }
+                has_space = false;
+                if in_row > 0 || v + w <= cols {
+                    // look at this char again on the new row
+                    continue;
+                }
+            }
+            if c == ' ' || c == '\t' {
+                has_space = true;
+                word = 0;
+            } else {
+                word += w;
+            }
+            v += w;
+            in_row += 1;
+            break;
+        }
+    }
+    rows
+}
+
+/// Rows of the lines `from..to`, using several threads when there are many.
+fn rows_of_lines(rope: &ropey::Rope, from: usize, to: usize, cols: usize, tab: usize) -> Vec<u32> {
+    let count = to.saturating_sub(from);
+    let one = |a: usize, b: usize| -> Vec<u32> { rope.lines_at(a).take(b - a).map(|l| wrap_rows(l, cols, tab)).collect() };
+    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).min(8);
+    if count < 50_000 || threads < 2 {
+        return one(from, to);
+    }
+    let per = count.div_ceil(threads);
+    let mut out = Vec::with_capacity(count);
+    std::thread::scope(|s| {
+        let handles: Vec<_> = (0..threads).map(|t| (from + t * per, (from + (t + 1) * per).min(to))).filter(|(a, b)| a < b).map(|(a, b)| s.spawn(move || one(a, b))).collect();
+        for h in handles {
+            out.extend(h.join().unwrap_or_default());
+        }
+    });
+    out
+}
+
 impl DisplayMap {
     fn rebuild(&mut self, buf: &Buffer, cols: usize, wrap: bool, folds: &[(usize, usize)], tab: usize) {
         let epoch = folds.iter().fold(folds.len() as u64, |h, f| h.wrapping_mul(1_000_003).wrapping_add((f.0 as u64) << 20 ^ f.1 as u64));
@@ -246,12 +424,48 @@ impl DisplayMap {
         if key == self.key && self.lines == buf.lines() {
             return;
         }
+        let old_key = self.key;
+        let old_lines = self.lines;
         self.key = key;
         self.lines = buf.lines();
-        self.starts.clear();
         if !wrap && folds.is_empty() {
+            self.starts.clear();
             return;
         }
+        if wrap && folds.is_empty() {
+            // only the text changed: lines before and after the change keep their rows
+            let same_shape = (old_key.1, old_key.2, old_key.3) == (key.1, key.2, key.3) && self.starts.len() == old_lines + 1;
+            if let (true, Some((head, tail))) = (same_shape, buf.changed_since(old_key.0)) {
+                let head = head.min(old_lines).min(self.lines);
+                let tail = tail.min(old_lines - head).min(self.lines - head);
+                let middle = rows_of_lines(&buf.rope, head, self.lines - tail, cols, tab);
+                let mut starts = Vec::with_capacity(self.lines + 1);
+                starts.extend_from_slice(&self.starts[..=head]);
+                let mut total = self.starts[head];
+                for r in middle {
+                    total += r;
+                    starts.push(total);
+                }
+                // the untouched end keeps its row counts, moved by what changed before it
+                let from = old_lines - tail;
+                let base = self.starts[from];
+                starts.extend(self.starts[from + 1..].iter().map(|s| s - base + total));
+                debug_assert_eq!(starts.len(), self.lines + 1);
+                self.starts = starts;
+                return;
+            }
+            let rows = rows_of_lines(&buf.rope, 0, self.lines, cols, tab);
+            self.starts.clear();
+            self.starts.reserve(self.lines + 1);
+            let mut total = 0u32;
+            self.starts.push(0);
+            for r in rows {
+                total += r;
+                self.starts.push(total);
+            }
+            return;
+        }
+        self.starts.clear();
         self.starts.reserve(self.lines + 1);
         let mut total = 0u32;
         let mut hidden_until = 0usize;
@@ -352,6 +566,7 @@ fn token_format(tok: u8, size: f32, pal: &Palette) -> TextFormat {
     let mut f = TextFormat { font_id: FontId::monospace(size), color: pal.token(tok), ..Default::default() };
     match tok {
         TOK_BOLD | TOK_HEADING => f.coords = theme::weight(700.0),
+        t if t > crate::logs::TOK_LOG_TIME && t <= crate::logs::TOK_LOG_TRACE + crate::logs::LEVEL_WORD => f.coords = theme::weight(700.0),
         TOK_ITALIC => f.italics = true,
         _ => {}
     }
@@ -999,10 +1214,30 @@ impl EdView {
 
     pub fn replace_all(&mut self, buf: &mut Buffer) -> bool {
         self.find.update(buf);
+        if self.find.searching {
+            // a large document is still being searched: replace when every match is known
+            self.find.replace_pending = true;
+            return false;
+        }
+        self.find.replace_pending = false;
         if self.find.matches.is_empty() {
             return false;
         }
-        let edits: Vec<Edit> = self.find.matches.iter().map(|(a, z)| Edit::new(*a, *z, self.expand_replacement(buf, *a, *z))).collect();
+        // the pattern is built once, not once per match
+        let re = if self.find.regex { self.find.pattern().ok() } else { None };
+        let with = self.find.replacement.replace("\\n", "\n").replace("\\t", "\t");
+        let edits: Vec<Edit> = self
+            .find
+            .matches
+            .iter()
+            .map(|(a, z)| {
+                let text = match &re {
+                    Some(re) => re.expand(&buf.slice(*a, *z), &with).unwrap_or_else(|| self.find.replacement.clone()),
+                    None => self.find.replacement.clone(),
+                };
+                Edit::new(*a, *z, text)
+            })
+            .collect();
         let caret = buf.primary().head;
         buf.edit(edits, EditKind::Other);
         buf.set_caret(caret.min(buf.len()));
@@ -1474,6 +1709,11 @@ pub fn show(ui: &mut Ui, view: &mut EdView, buf: &mut Buffer, hl: &mut Highlight
 
     if st.find_visible(view) {
         view.find.update(buf);
+        if view.find.searching {
+            ui.ctx().request_repaint_after(Duration::from_millis(60));
+        } else if view.find.replace_pending {
+            view.replace_all(buf);
+        }
     }
 
     let budget = Duration::from_millis(7);
@@ -1817,12 +2057,15 @@ pub fn find_bar(ui: &mut Ui, view: &mut EdView, buf: &mut Buffer, pal: &Palette)
             let count = match (&view.find.error, view.find.matches.len()) {
                 (Some(e), _) => e.clone(),
                 (None, 0) if view.find.query.is_empty() => String::new(),
+                (None, 0) if view.find.searching => "Searching…".into(),
                 (None, 0) => "No results".into(),
                 (None, n) => {
                     let s = buf.primary();
+                    let more = if view.find.capped { "+" } else { "" };
+                    let state = if view.find.replace_pending { ", replacing when done…" } else if view.find.searching { ", searching…" } else { "" };
                     match view.find.matches.binary_search(&(s.start(), s.end())) {
-                        Ok(i) => format!("{} of {n}", i + 1),
-                        Err(_) => format!("{n} found"),
+                        Ok(i) => format!("{} of {n}{more}{state}", i + 1),
+                        Err(_) => format!("{n}{more} found{state}"),
                     }
                 }
             };
@@ -1875,8 +2118,87 @@ mod tests {
     use super::*;
 
     #[test]
+    fn wrap_rows_follow_edits_without_a_full_recount() {
+        let mut text = String::new();
+        for i in 0..400 {
+            text.push_str(&"word ".repeat(i % 37));
+            text.push('\n');
+        }
+        let mut buf = Buffer::new(&text);
+        let mut map = DisplayMap::default();
+        map.rebuild(&buf, 30, true, &[], 4);
+        let mut seed = 99u64;
+        let mut next = move || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (seed >> 33) as usize
+        };
+        for step in 0..400 {
+            match next() % 10 {
+                0 => {
+                    buf.undo();
+                }
+                1 => {
+                    buf.redo();
+                }
+                2 => buf.append_external("appended line that is long enough to wrap at thirty columns\nand another\n"),
+                _ => {
+                    // one to three edits at once: insertions, deletions, with and without line ends
+                    let mut edits = Vec::new();
+                    for _ in 0..1 + next() % 3 {
+                        let a = next() % (buf.len() + 1);
+                        let b = (a + next() % 90).min(buf.len());
+                        let ins = ["", "x", "some words here ", "\n", "two\nlines of text that are quite long indeed\n", "\n\n\n"][next() % 6];
+                        edits.push(Edit::new(a, if next() % 2 == 0 { a } else { b }, ins));
+                    }
+                    buf.edit(edits, EditKind::Other);
+                }
+            }
+            // sometimes several changes pile up before the rows are asked for
+            if next() % 3 == 0 {
+                continue;
+            }
+            map.rebuild(&buf, 30, true, &[], 4);
+            let mut fresh = DisplayMap::default();
+            fresh.rebuild(&buf, 30, true, &[], 4);
+            assert_eq!(map.starts.len(), buf.lines() + 1, "step {step}");
+            assert!(map.starts == fresh.starts, "step {step}: rows differ from a full recount");
+        }
+        // a change long ago (more than the buffer remembers) falls back to a full recount
+        for _ in 0..300 {
+            buf.edit(vec![Edit::new(0, 0, "y ")], EditKind::Other);
+        }
+        map.rebuild(&buf, 30, true, &[], 4);
+        let mut fresh = DisplayMap::default();
+        fresh.rebuild(&buf, 30, true, &[], 4);
+        assert!(map.starts == fresh.starts);
+    }
+
+    #[test]
     fn wrapping() {
         assert_eq!(wrap_breaks("short", 20, 4), vec![0]);
+        // counting rows without building the breaks gives the same number, for all kinds of lines
+        let samples = ["", "short", "aaaa bbbb cccc dddd", "abcdefghijklmnopqrstuvwxyz", "word  with   many    spaces     between      words", "\ttabs\tin\tthe\tmiddle\tof\ta\tline\tthat\tis\tlong", "漢字漢字漢字漢字漢字漢字 wide 漢字漢字漢字漢字漢字漢字漢字", "a verylongwordthatdoesnotfitintoonerowatallandmustbecut here", "x ", " leading and trailing ", "aaaaaaaaaa bbbbbbbbbb", "aaaaaaaaa b ccccccccccccccccccccccc d", "2026-11-15T10:00:00.000Z INFO  [worker-3] com.example.service.Handler - request completed status=200 path=/api/v1/orders/123 duration=45ms"];
+        for s in samples {
+            for cols in [8usize, 9, 10, 11, 13, 20, 37, 80] {
+                for tab in [2usize, 4, 8] {
+                    let rope = ropey::Rope::from_str(s);
+                    assert_eq!(wrap_rows(rope.line(0), cols, tab) as usize, wrap_breaks(s, cols, tab).len(), "{s:?} cols={cols} tab={tab}");
+                }
+            }
+        }
+        // a few thousand generated lines as well
+        let mut seed = 12345u64;
+        let mut next = move || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (seed >> 33) as usize
+        };
+        for _ in 0..3000 {
+            let n = next() % 120;
+            let s: String = (0..n).map(|_| ['a', 'b', ' ', ' ', '\t', '漢', 'x', '-', 'y', 'z'][next() % 10]).collect();
+            let cols = 8 + next() % 40;
+            let rope = ropey::Rope::from_str(&s);
+            assert_eq!(wrap_rows(rope.line(0), cols, 4) as usize, wrap_breaks(&s, cols, 4).len(), "{s:?} cols={cols}");
+        }
         assert_eq!(wrap_breaks("aaaa bbbb cccc dddd", 10, 4), vec![0, 10]);
         assert_eq!(wrap_breaks("abcdefghijklmnopqrstuvwxyz", 10, 4), vec![0, 10, 20]);
     }
@@ -1899,6 +2221,67 @@ mod tests {
         assert_eq!(text, "fn name() {\n      \n  }");
         assert_eq!(stops[0], (1, 3, 7));
         assert_eq!(stops.last().unwrap().0, 0);
+    }
+
+    #[test]
+    fn large_documents_are_searched_in_pieces() {
+        // more than two pieces, with characters of several bytes, so that positions must be counted
+        let mut text = String::new();
+        let mut i = 0;
+        while text.len() < 9 << 20 {
+            text.push_str(&format!("line {i} grüße needle-{i} 漢字 and a needle again\n"));
+            i += 1;
+        }
+        let rope = ropey::Rope::from_str(&text);
+        for (query, case) in [("needle", true), (r"needle-\d+", true), ("GRÜSSE|grüße", false), (r"(?<=漢)字", true)] {
+            let re = crate::rx::Pattern::new(query, case, true).unwrap();
+            let mut found = Vec::new();
+            scan_rope(&rope, &re, 0, rope.len_chars(), |batch| {
+                found.extend(batch);
+                true
+            });
+            // the same search over the whole text at once
+            let mut expect = Vec::new();
+            re.scan(&text, |a, z| {
+                expect.push((rope.byte_to_char(a), rope.byte_to_char(z)));
+                true
+            });
+            assert_eq!(found.len(), expect.len(), "{query}");
+            assert!(found == expect, "{query}: positions differ");
+        }
+        // within a range, and stopping early
+        let re = crate::rx::Pattern::new("needle", true, true).unwrap();
+        let (lo, hi) = (rope.line_to_char(10), rope.line_to_char(20));
+        let mut found = Vec::new();
+        scan_rope(&rope, &re, lo, hi, |batch| {
+            found.extend(batch);
+            true
+        });
+        assert_eq!(found.len(), 20);
+        assert!(found.iter().all(|m| m.0 >= lo && m.1 <= hi && rope.slice(m.0..m.1).to_string() == "needle"));
+        let mut calls = 0;
+        scan_rope(&rope, &re, 0, rope.len_chars(), |_| {
+            calls += 1;
+            false
+        });
+        assert_eq!(calls, 1);
+        // the find bar on a large buffer: results arrive from the other thread, then Replace All
+        let mut b = Buffer::from_rope(rope);
+        let mut v = EdView::default();
+        v.find.query = "needle again".into();
+        v.find.replacement = "pin".into();
+        v.find.update(&b);
+        assert!(v.find.searching && !v.replace_all(&mut b), "the search is still running");
+        let started = Instant::now();
+        while v.find.searching && started.elapsed() < Duration::from_secs(60) {
+            std::thread::sleep(Duration::from_millis(10));
+            v.find.update(&b);
+        }
+        assert_eq!(v.find.matches.len(), i);
+        assert!(v.find.replace_pending && v.replace_all(&mut b));
+        assert_eq!(b.len(), text.chars().count() - i * ("needle again".len() - "pin".len()));
+        assert!(b.line_text(i - 1).ends_with("and a pin"));
+        assert!(b.undo() && b.len() == text.chars().count());
     }
 
     #[test]

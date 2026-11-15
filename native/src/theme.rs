@@ -584,6 +584,17 @@ impl Palette {
             TOK_LINK => self.accent,
             TOK_INSERTED => self.tip,
             TOK_DELETED => self.caution,
+            crate::logs::TOK_LOG_TIME => self.muted,
+            t if (crate::logs::TOK_LOG_ERROR..=crate::logs::TOK_LOG_TRACE + crate::logs::LEVEL_WORD).contains(&t) => {
+                let t = if t > crate::logs::TOK_LOG_TIME { t - crate::logs::LEVEL_WORD } else { t };
+                match t {
+                    crate::logs::TOK_LOG_ERROR => self.danger,
+                    crate::logs::TOK_LOG_WARN => self.warning,
+                    crate::logs::TOK_LOG_INFO => self.tip,
+                    crate::logs::TOK_LOG_DEBUG => self.muted,
+                    _ => self.faint,
+                }
+            }
             _ => self.text,
         }
     }

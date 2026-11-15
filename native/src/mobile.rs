@@ -251,6 +251,39 @@ pub fn save_to_downloads(name: &str, bytes: &[u8]) -> Result<String, String> {
     }
 }
 
+/// The body of a web answer, read through the activity as it arrives.
+#[cfg(target_os = "android")]
+pub struct HttpStream(i32);
+
+#[cfg(target_os = "android")]
+impl std::io::Read for HttpStream {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match android::http_read(self.0, buf.len().min(64 * 1024)) {
+            Some(bytes) => {
+                let n = bytes.len().min(buf.len());
+                buf[..n].copy_from_slice(&bytes[..n]);
+                Ok(n)
+            }
+            None => Err(std::io::Error::other("the connection was lost")),
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+impl Drop for HttpStream {
+    fn drop(&mut self) {
+        android::http_close(self.0);
+    }
+}
+
+/// Asks for a web address with the system's HTTP client. Returns the head of the answer
+/// as `status\netag\nlast-modified\ncontent-range` and the body as a stream.
+#[cfg(target_os = "android")]
+pub fn http_open(url: &str, from: u64, etag: &str, modified: &str) -> Option<(String, HttpStream)> {
+    let (head, id) = android::http_open(url, from, etag, modified)?;
+    Some((head, HttpStream(id)))
+}
+
 /// Write a line to the Android log (`adb logcat -s Inkdown`).
 pub fn log(msg: &str) {
     #[cfg(target_os = "android")]
@@ -411,6 +444,38 @@ mod android {
             Ok(Some(s))
         })
         .flatten()
+    }
+
+    /// `(head, connection id)`; the head starts with status 0 when the request failed.
+    pub fn http_open(url: &str, from: u64, etag: &str, modified: &str) -> Option<(String, i32)> {
+        with_env(|env, act| {
+            let u = env.new_string(url)?;
+            let e = env.new_string(etag)?;
+            let m = env.new_string(modified)?;
+            let id = env.call_method(act, "httpOpen", "(Ljava/lang/String;JLjava/lang/String;Ljava/lang/String;)I", &[JValue::Object(&u), JValue::Long(from as i64), JValue::Object(&e), JValue::Object(&m)])?.i()?;
+            let head = env.call_method(act, "httpHead", "(I)Ljava/lang/String;", &[JValue::Int(id)])?.l()?;
+            let head: String = env.get_string(&JString::from(head))?.into();
+            Ok((head, id))
+        })
+    }
+
+    /// The next piece of the body: empty at its end, `None` when the connection failed.
+    pub fn http_read(id: i32, max: usize) -> Option<Vec<u8>> {
+        with_env(|env, act| {
+            let out = env.call_method(act, "httpRead", "(II)[B", &[JValue::Int(id), JValue::Int(max as i32)])?.l()?;
+            if out.is_null() {
+                return Ok(None);
+            }
+            Ok(Some(env.convert_byte_array(jni::objects::JByteArray::from(out))?))
+        })
+        .flatten()
+    }
+
+    pub fn http_close(id: i32) {
+        with_env(|env, act| {
+            env.call_method(act, "httpClose", "(I)V", &[JValue::Int(id)])?;
+            Ok(())
+        });
     }
 
     pub fn read_uri(uri: &str) -> Option<Vec<u8>> {

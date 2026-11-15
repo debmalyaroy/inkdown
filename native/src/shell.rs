@@ -45,6 +45,7 @@ fn main_menu(ui: &mut Ui, app: &mut InkApp) {
     menu_item(ui, app, icons::LAYOUT_TEMPLATE, "New from Template…", "new_from_template");
     menu_item(ui, app, icons::FOLDER_OPEN, "Open…", "open_file");
     menu_item(ui, app, icons::FOLDER, "Open Folder…", "open_folder");
+    menu_item(ui, app, icons::LINK, "Open from Web Address…", "open_url");
     menu_item(ui, app, icons::HISTORY, "Open Recent…", "open_recent");
     ui.separator();
     menu_item(ui, app, icons::SAVE, "Save", "save");
@@ -93,6 +94,7 @@ fn main_menu(ui: &mut Ui, app: &mut InkApp) {
         menu_item(ui, app, icons::HASH, "Line Numbers", "toggle_line_numbers");
         menu_item(ui, app, icons::MAP, "Minimap", "toggle_minimap");
         menu_item(ui, app, icons::WRAP_TEXT, "Word Wrap", "toggle_word_wrap");
+        menu_item(ui, app, icons::REFRESH_CW, if app.docs.get(app.active).is_some_and(|d| d.live.follow) { "Stop Following" } else { "Follow (Show New Lines)" }, "toggle_follow");
     });
     menu_item(ui, app, icons::PLUG, "Integrations…", "integrations");
     ui.separator();
@@ -183,7 +185,7 @@ pub fn top_bar(ui: &mut Ui, app: &mut InkApp, narrow: bool) {
                 if icon_button(ui, &pal, if dark { icons::MOON } else { icons::SUN }, "Theme").clicked() {
                     app.pending.push("select_theme".into());
                 }
-                let exportable = app.docs.get(app.active).is_some_and(|d| !matches!(d.kind, Kind::Code | Kind::Image | Kind::Data(_) | Kind::Table(_)));
+                let exportable = app.docs.get(app.active).is_some_and(|d| !matches!(d.kind, Kind::Code | Kind::Image | Kind::Pdf | Kind::Data(_) | Kind::Table(_)));
                 if exportable {
                     let b = egui::Button::new(egui::RichText::new(if narrow { icons::SHARE_2.to_string() } else { format!("{}  Export", icons::SHARE_2) }).size(12.5).color(pal.on_accent())).fill(pal.accent).corner_radius(7).min_size(vec2(0.0, 30.0));
                     let r = ui.add(b);
@@ -365,7 +367,7 @@ pub fn status_bar(ui: &mut Ui, app: &mut InkApp) {
                 ui.label(text("Ready".into()));
                 return;
             };
-            if d.kind != Kind::Image {
+            if !d.kind.viewed_only() {
                 let s = d.buf.primary();
                 let (line, col) = d.buf.line_col(s.head);
                 let pos = if d.buf.sels.len() > 1 {
@@ -380,7 +382,7 @@ pub fn status_bar(ui: &mut Ui, app: &mut InkApp) {
             }
             if d.kind.prose() && d.view.md.words > 0 {
                 ui.label(text(format!("{} words · {} min read", d.view.md.words, (d.view.md.words / 220).max(1))));
-            } else if d.kind != Kind::Image {
+            } else if !d.kind.viewed_only() {
                 ui.label(text(format!("{} lines", d.buf.lines())));
             }
             if app.macro_rec.is_some() {
@@ -389,8 +391,29 @@ pub fn status_bar(ui: &mut Ui, app: &mut InkApp) {
             if let Some(c) = app.keymap.chord_pending() {
                 ui.label(egui::RichText::new(format!("{} …", c.label())).size(11.5).color(pal.accent));
             }
-            if d.read_only && d.kind != Kind::Image {
+            if let Some(p) = d.live.percent() {
+                let what = if d.live.remote() { "Fetching".to_string() } else { format!("Reading {} MB", d.live.total >> 20) };
+                ui.label(egui::RichText::new(format!("{}  {what}… {p}%", icons::REFRESH_CW)).size(11.5).color(pal.accent));
+            } else if d.live.remote() {
+                let ago = (app.now - d.live.checked_at).max(0.0);
+                let state = match (&d.live.error, app.set.live_refresh) {
+                    (Some(_), _) => "Web · cannot refresh".to_string(),
+                    (None, false) => "Web · refresh off".to_string(),
+                    (None, true) if d.live.streaming => "Web · streaming".to_string(),
+                    (None, true) => format!("Web · live, checked {ago:.0} s ago"),
+                };
+                let r = ui.add(egui::Label::new(egui::RichText::new(format!("{}  {state}", icons::LINK)).size(11.5).color(if d.live.error.is_some() { pal.danger } else { pal.accent })).sense(egui::Sense::click())).on_hover_text(d.live.error.clone().unwrap_or_else(|| d.live.url.clone().unwrap_or_default()));
+                if r.clicked() {
+                    app.pending.push("reload_now".into());
+                }
+            } else if d.read_only && !d.kind.viewed_only() {
                 ui.label(text(format!("{}  Read-only", icons::LOCK)));
+            }
+            if d.live.follow {
+                let r = ui.add(egui::Label::new(egui::RichText::new(format!("{}  Following", icons::REFRESH_CW)).size(11.5).color(pal.tip)).sense(egui::Sense::click())).on_hover_text("New lines appear as they are written. Click to stop.");
+                if r.clicked() {
+                    app.pending.push("toggle_follow".into());
+                }
             }
             if app.build.running() {
                 ui.label(egui::RichText::new(format!("{}  Building…", icons::HAMMER)).size(11.5).color(pal.accent));
@@ -404,10 +427,10 @@ pub fn status_bar(ui: &mut Ui, app: &mut InkApp) {
                     }
                 };
                 let roomy = ui.ctx().content_rect().width() >= 620.0;
-                if d.kind != Kind::Image && !roomy {
+                if !d.kind.viewed_only() && !roomy {
                     // phones: only the syntax name fits beside the position and word count
                     link(ui, d.hl.name().to_string(), "set_syntax", "Syntax");
-                } else if d.kind != Kind::Image {
+                } else if !d.kind.viewed_only() {
                     link(ui, d.hl.name().to_string(), "set_syntax", "Syntax");
                     link(ui, if d.crlf { "CRLF".into() } else { "LF".into() }, "set_line_endings", "Line endings");
                     link(ui, format!("{}{}", d.encoding.name(), if d.bom && d.encoding == encoding_rs::UTF_8 { " BOM" } else { "" }), "set_encoding", "Encoding");
@@ -504,6 +527,59 @@ pub fn dialogs(ctx: &egui::Context, app: &mut InkApp) {
                         d.buf.mark_saved();
                     }
                     app.close_tab(ix);
+                    keep = false;
+                }
+                3 => keep = false,
+                _ => {}
+            }
+            if esc {
+                keep = false;
+            }
+        }
+        Dialog::ConfirmQuit => {
+            let open = app.unprotected();
+            let names: Vec<String> = open.iter().filter_map(|i| app.docs.get(*i)).map(|d| d.name.clone()).collect();
+            let why = if app.set.hot_exit { "They are too large to be kept as drafts, so they will not come back when Inkdown starts again." } else { "Keeping unsaved work for the next start is switched off (\"hot_exit\"), so they will not come back." };
+            let mut act = 0;
+            let esc = dialog_frame(ctx, &pal, "dlg-quit", 440.0, |ui| {
+                ui.label(egui::RichText::new(if names.len() == 1 { format!("Save changes to {}?", names[0]) } else { format!("Save changes to {} documents?", names.len()) }).size(16.0).strong());
+                ui.add_space(6.0);
+                if names.len() > 1 {
+                    ui.label(egui::RichText::new(names.iter().take(6).cloned().collect::<Vec<_>>().join(", ") + if names.len() > 6 { ", …" } else { "" }).color(pal.text));
+                    ui.add_space(4.0);
+                }
+                ui.label(egui::RichText::new(why).color(pal.muted));
+                ui.add_space(16.0);
+                ui.horizontal(|ui| {
+                    if primary(ui, &pal, if names.len() == 1 { "Save" } else { "Save All" }).clicked() {
+                        act = 1;
+                    }
+                    if ui.add(egui::Button::new("Don't Save").min_size(vec2(84.0, 30.0))).clicked() {
+                        act = 2;
+                    }
+                    if ui.add(egui::Button::new("Cancel").min_size(vec2(84.0, 30.0))).clicked() {
+                        act = 3;
+                    }
+                });
+            });
+            match act {
+                1 => {
+                    for ix in open {
+                        if !app.save_doc(ix, false) {
+                            break;
+                        }
+                    }
+                    keep = false;
+                    // everything is safe now: close; otherwise a save was cancelled, so stay
+                    if app.unprotected().is_empty() {
+                        app.quit = true;
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                }
+                2 => {
+                    app.quit_anyway = true;
+                    app.quit = true;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     keep = false;
                 }
                 3 => keep = false,
@@ -627,6 +703,39 @@ pub fn dialogs(ctx: &egui::Context, app: &mut InkApp) {
                 }
             }
             if act != 0 || esc {
+                keep = false;
+            }
+        }
+        Dialog::OpenUrl(url) => {
+            let mut act = 0;
+            let esc = dialog_frame(ctx, &pal, "dlg-url", 480.0, |ui| {
+                ui.label(egui::RichText::new("Open from Web Address").size(16.0).strong());
+                ui.add_space(4.0);
+                ui.label(egui::RichText::new("The document is read from the server and refreshed while it is open. A log is followed from its end.").size(11.5).color(pal.faint));
+                ui.add_space(8.0);
+                let r = ui.add(egui::TextEdit::singleline(url).hint_text("https://example.com/app.log").desired_width(f32::INFINITY));
+                r.request_focus();
+                if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    act = 1;
+                }
+                ui.add_space(14.0);
+                ui.horizontal(|ui| {
+                    if primary(ui, &pal, "Open").clicked() {
+                        act = 1;
+                    }
+                    if ui.add(egui::Button::new("Cancel").min_size(vec2(84.0, 30.0))).clicked() {
+                        act = 2;
+                    }
+                });
+            });
+            if act == 1 {
+                let address = url.trim().to_string();
+                let address = if address.contains("://") || address.is_empty() { address } else { format!("https://{address}") };
+                if app.open_url(ctx, &address) {
+                    keep = false;
+                }
+            }
+            if act == 2 || esc {
                 keep = false;
             }
         }

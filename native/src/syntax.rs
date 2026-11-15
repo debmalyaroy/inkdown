@@ -91,10 +91,20 @@ pub fn find(name: &str, first_line: &str) -> &'static SyntaxReference {
         "mmd" | "mermaid" | "gv" | "adoc" | "asciidoc" => None,
         _ => None,
     };
+    let found = find_by_name(ss, file, ext, alias, first_line);
+    // text that reads like a log is coloured as one, whatever the file is called
+    if found.name == "Plain Text" && crate::logs::looks_like_log(first_line) {
+        return ss.find_syntax_by_extension("log").unwrap_or(found);
+    }
+    found
+}
+
+fn find_by_name(ss: &'static SyntaxSet, file: &str, ext: &str, alias: Option<&str>, first_line: &str) -> &'static SyntaxReference {
     ss.find_syntax_by_extension(file)
         .or_else(|| ss.find_syntax_by_extension(ext))
         .or_else(|| alias.and_then(|a| ss.find_syntax_by_extension(a)))
         .or_else(|| ss.find_syntax_by_first_line(first_line))
+        .or_else(|| if matches!(ext, "out" | "err" | "trace") || file.contains(".log.") || crate::logs::looks_like_log(first_line) { ss.find_syntax_by_extension("log") } else { None })
         .unwrap_or_else(|| ss.find_syntax_plain_text())
 }
 
@@ -142,6 +152,8 @@ struct Worker {
 pub struct Highlighter {
     pub syntax: &'static SyntaxReference,
     plain: bool,
+    /// Log files are coloured line by line from their severity, without the parser.
+    log: bool,
     /// Parser state at the start of every `STEP`-line block, as far as it is known.
     checkpoints: Vec<(ParseState, ScopeStack)>,
     cache: HashMap<usize, Spans>,
@@ -166,7 +178,8 @@ impl Drop for Highlighter {
 impl Highlighter {
     pub fn new(syntax: &'static SyntaxReference) -> Self {
         let plain = syntax.name == "Plain Text";
-        Self { syntax, plain, checkpoints: Vec::new(), cache: HashMap::new(), approx: HashMap::new(), worker: None, generation: Arc::new(std::sync::atomic::AtomicU64::new(1)), spent: Duration::ZERO, pending: false }
+        let log = syntax.name.eq_ignore_ascii_case("log");
+        Self { syntax, plain, log, checkpoints: Vec::new(), cache: HashMap::new(), approx: HashMap::new(), worker: None, generation: Arc::new(std::sync::atomic::AtomicU64::new(1)), spent: Duration::ZERO, pending: false }
     }
 
     pub fn name(&self) -> &str {
@@ -269,6 +282,22 @@ impl Highlighter {
         }
         if let Some(s) = self.cache.get(&line) {
             return Some(s.clone());
+        }
+        if self.log {
+            let text = Self::line(buf, line);
+            let text = text.trim_end_matches(['\n', '\r']);
+            // a stack frame or wrapped line takes the colour of the entry above it
+            let inherited = if crate::logs::continues(text) {
+                (line.saturating_sub(300)..line).rev().map(|i| Self::line(buf, i)).find(|l| !crate::logs::continues(l.trim_end_matches(['\n', '\r']))).and_then(|l| crate::logs::find_level(&l).map(|f| f.2))
+            } else {
+                None
+            };
+            let spans: Spans = crate::logs::spans(text, inherited).into();
+            if self.cache.len() > 6000 {
+                self.cache.clear();
+            }
+            self.cache.insert(line, spans.clone());
+            return Some(spans);
         }
         let block = line / STEP;
         if self.checkpoints.is_empty() {

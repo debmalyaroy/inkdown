@@ -78,6 +78,10 @@ pub struct Buffer {
     pub version: u64,
     /// Lowest line touched since the last `take_dirty_line`.
     dirty_line: Option<usize>,
+    /// The latest changes as `(version after, first line touched, lines at the end left
+    /// alone)`, so that things computed per line can be brought up to date without
+    /// looking at every line again.
+    changes: std::collections::VecDeque<(u64, usize, usize)>,
     pub now: f64,
     /// Ctrl+D started from a caret: later matches must be whole words.
     pub occur_word: bool,
@@ -86,7 +90,24 @@ pub struct Buffer {
 
 impl Buffer {
     pub fn new(text: &str) -> Self {
-        Self { rope: Rope::from_str(text), sels: vec![Sel::caret(0)], undo: Vec::new(), redo: Vec::new(), next_id: 1, saved_id: 0, version: 0, dirty_line: None, now: 0.0, occur_word: false, primary_last: false }
+        Self { rope: Rope::from_str(text), sels: vec![Sel::caret(0)], undo: Vec::new(), redo: Vec::new(), next_id: 1, saved_id: 0, version: 0, dirty_line: None, changes: std::collections::VecDeque::new(), now: 0.0, occur_word: false, primary_last: false }
+    }
+
+    /// A buffer around text that is already a rope (large files are decoded straight into one).
+    pub fn from_rope(rope: Rope) -> Self {
+        Self { rope, ..Self::new("") }
+    }
+
+    /// Adds text at the end that arrived from outside (a log that grew). It is not an
+    /// edit: nothing is added to the undo history and the buffer does not become unsaved.
+    pub fn append_external(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        let line = self.rope.len_lines().saturating_sub(1);
+        let at = self.rope.len_chars();
+        self.rope.insert(at, text);
+        self.touch(line, 0);
     }
 
     pub fn len(&self) -> usize {
@@ -153,9 +174,33 @@ impl Buffer {
     pub fn take_dirty_line(&mut self) -> Option<usize> {
         self.dirty_line.take()
     }
-    fn touch(&mut self, line: usize) {
+    /// Notes a change that began at `line` and left the last `tail` lines as they were.
+    fn touch(&mut self, line: usize, tail: usize) {
         self.version += 1;
         self.dirty_line = Some(self.dirty_line.map_or(line, |d| d.min(line)));
+        self.changes.push_back((self.version, line, tail));
+        if self.changes.len() > 256 {
+            self.changes.pop_front();
+        }
+    }
+
+    /// What changed after `version`: `(first line touched, lines at the end left alone)`.
+    /// `None` when that is no longer known (too long ago) and everything must be looked at.
+    pub fn changed_since(&self, version: u64) -> Option<(usize, usize)> {
+        if version > self.version || self.changes.front().is_none_or(|c| c.0 > version + 1) {
+            return None;
+        }
+        let mut span: Option<(usize, usize)> = None;
+        for (v, line, tail) in self.changes.iter().filter(|c| c.0 > version) {
+            let _ = v;
+            span = Some(span.map_or((*line, *tail), |(l, t)| (l.min(*line), t.min(*tail))));
+        }
+        span
+    }
+
+    /// Lines after the one holding char `pos`.
+    fn lines_after(&self, pos: usize) -> usize {
+        self.lines().saturating_sub(1 + self.line_of(pos.min(self.len())))
     }
 
     pub fn primary(&self) -> Sel {
@@ -239,6 +284,7 @@ impl Buffer {
         }
         let before = self.sels.clone();
         let first_line = self.line_of(clean[0].start);
+        let tail = self.lines_after(clean.last().map_or(0, |e| e.end));
         // map selections
         let map = |p: usize, after: bool| -> usize {
             let mut delta: isize = 0;
@@ -258,7 +304,7 @@ impl Buffer {
         let group: Vec<Change> = clean.iter().rev().map(|e| Change { pos: e.start, removed: self.rope.slice(e.start..e.end).to_string(), inserted: e.text.clone() }).collect();
         self.apply_group(&group);
         self.sels = mapped;
-        self.touch(first_line);
+        self.touch(first_line, tail);
         self.redo.clear();
         let id = self.next_id;
         self.next_id += 1;
@@ -290,14 +336,21 @@ impl Buffer {
     pub fn undo(&mut self) -> bool {
         let Some(t) = self.undo.pop() else { return false };
         let mut line = usize::MAX;
+        let mut tail = usize::MAX;
         for g in t.groups.iter().rev() {
+            // where the highest change of this group ends in the text as it is now
+            if let Some(top) = g.first() {
+                let lower: isize = g[1..].iter().map(|c| c.inserted.chars().count() as isize - c.removed.chars().count() as isize).sum();
+                let end = (top.pos as isize + top.inserted.chars().count() as isize + lower).max(0) as usize;
+                tail = tail.min(self.lines_after(end));
+            }
             self.revert_group(g);
             if let Some(c) = g.last() {
                 line = line.min(self.line_of(c.pos.min(self.len())));
             }
         }
         self.sels = t.before.clone();
-        self.touch(if line == usize::MAX { 0 } else { line });
+        self.touch(if line == usize::MAX { 0 } else { line }, if tail == usize::MAX { 0 } else { tail });
         self.redo.push(t);
         self.normalize();
         true
@@ -306,16 +359,21 @@ impl Buffer {
     pub fn redo(&mut self) -> bool {
         let Some(t) = self.redo.pop() else { return false };
         let mut line = usize::MAX;
+        let mut tail = usize::MAX;
         for g in &t.groups {
             if let Some(c) = g.last() {
                 line = line.min(self.line_of(c.pos.min(self.len())));
+            }
+            // the highest change of the group is applied first, at its recorded place
+            if let Some(top) = g.first() {
+                tail = tail.min(self.lines_after(top.pos + top.removed.chars().count()));
             }
             self.apply_group(g);
         }
         if !t.after.is_empty() {
             self.sels = t.after.clone();
         }
-        self.touch(if line == usize::MAX { 0 } else { line });
+        self.touch(if line == usize::MAX { 0 } else { line }, if tail == usize::MAX { 0 } else { tail });
         self.undo.push(t);
         self.normalize();
         true

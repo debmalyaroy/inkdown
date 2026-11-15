@@ -302,6 +302,7 @@ pub fn sheet(ctx: &egui::Context, app: &mut InkApp, inset_bottom: f32) {
                         command_row(ui, app, icons::ZOOM_OUT, "Smaller text", "decrease_font_size");
                         command_row(ui, app, icons::WRAP_TEXT, "Word wrap", "toggle_word_wrap");
                         command_row(ui, app, icons::HASH, "Line numbers", "toggle_line_numbers");
+                        command_row(ui, app, icons::REFRESH_CW, if app.docs.get(app.active).is_some_and(|d| d.live.follow) { "Follow new lines: on" } else { "Follow new lines: off" }, "toggle_follow");
                         command_row(ui, app, icons::SAVE, if app.set.auto_save { "AutoSave: on" } else { "AutoSave: off" }, "toggle_auto_save");
                         divider(ui, &pal);
                         command_row(ui, app, icons::SETTINGS, "All settings (as a file)", "open_settings");
@@ -332,7 +333,7 @@ fn rows_height(which: Sheet, app: &InkApp) -> f32 {
     const ROW: f32 = 52.0;
     const DIVIDER: f32 = 9.0;
     match which {
-        Sheet::Menu => 15.0 * ROW + 4.0 * DIVIDER,
+        Sheet::Menu => 16.0 * ROW + 4.0 * DIVIDER,
         Sheet::Documents => app.docs.len() as f32 * 54.0 + DIVIDER + 2.0 * ROW,
         Sheet::Export => {
             let kind = app.docs.get(app.active).map(|d| d.kind);
@@ -346,7 +347,7 @@ fn rows_height(which: Sheet, app: &InkApp) -> f32 {
             }
         }
         Sheet::Tools => crate::picker::COMMANDS.iter().filter(|c| c.0.starts_with("tool_") && crate::picker::available(c.0)).count() as f32 * ROW,
-        Sheet::Settings => 8.0 * ROW + DIVIDER,
+        Sheet::Settings => 9.0 * ROW + DIVIDER,
         Sheet::Help => 6.0 * ROW,
     }
 }
@@ -356,6 +357,7 @@ fn menu_rows(ui: &mut Ui, app: &mut InkApp) {
     command_row(ui, app, icons::FILE_PLUS, "New document", "new_file");
     command_row(ui, app, icons::LAYOUT_TEMPLATE, "New from template", "new_from_template");
     command_row(ui, app, icons::FOLDER_OPEN, "Open", "open_file");
+    command_row(ui, app, icons::LINK, "Open from web address", "open_url");
     command_row(ui, app, icons::HISTORY, "Recent", "open_recent");
     divider(ui, &pal);
     command_row(ui, app, icons::SAVE, "Save", "save");

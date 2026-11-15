@@ -529,6 +529,228 @@ quit
     }
 }
 
+# -------------------------------------------------------------------- pdf
+if (Want "pdf") {
+    Write-Host "pdf"
+    Copy-Item (Join-Path $PSScriptRoot "fixtures\sample.pdf") "$Out\work\sample.pdf" -Force
+    Copy-Item (Join-Path $PSScriptRoot "fixtures\sample.pdf") "$Out\work\renamed.bin" -Force
+    Set-Content "$Out\work\broken.pdf" "%PDF-1.4 this is not really one" -NoNewline
+    $before = (Get-FileHash "$Out\work\sample.pdf").Hash
+    $s = @"
+wait 10
+open $w/sample.pdf
+wait 30
+sleep 1500
+wait 5
+dump $o/pdf1.json
+shot $o/pdf1.png
+move 640 400
+scroll 0 -1500
+wait 10
+dump $o/pdf2.json
+type should not be typed
+cmd save
+wait 4
+open $w/renamed.bin
+wait 20
+dump $o/pdf3.json
+open $w/broken.pdf
+wait 20
+dump $o/pdf4.json
+quit
+"@
+    if (Run "pdf" $s) {
+        $d = Doc (J "pdf1")
+        Check "a PDF opens as pages, read-only, in Read mode" ($d.kind -eq "PDF" -and $d.mode -eq "read" -and $d.pdf_pages -eq 3 -and $d.read_only -and -not $d.pdf_error) "$($d.kind) pages=$($d.pdf_pages) $($d.pdf_error)"
+        Add-Type -AssemblyName System.Drawing
+        $bmp = [System.Drawing.Bitmap]::new("$Out\pdf1.png")
+        $white = 0; $blue = 0
+        for ($x = 300; $x -lt $bmp.Width; $x += 7) { for ($y = 120; $y -lt $bmp.Height - 60; $y += 7) {
+            $c = $bmp.GetPixel($x, $y)
+            if ($c.R -gt 250 -and $c.G -gt 250 -and $c.B -gt 250) { $white++ }
+            if ($c.B -gt 200 -and $c.R -lt 90 -and $c.G -lt 140) { $blue++ }
+        } }
+        $bmp.Dispose()
+        Check "the page is drawn: white paper with its blue bar" ($white -gt 2000 -and $blue -gt 20) "white=$white blue=$blue"
+        Check "scrolling moves to a later page" ((Doc (J "pdf2")).pdf_page -ge 2) "page=$((Doc (J 'pdf2')).pdf_page)"
+        Check "the PDF file is never rewritten" ((Get-FileHash "$Out\work\sample.pdf").Hash -eq $before)
+        Check "a PDF under another name is recognised" ((Doc (J "pdf3")).kind -eq "PDF" -and (Doc (J "pdf3")).pdf_pages -eq 3) "$((Doc (J 'pdf3')).kind)"
+        Check "a damaged PDF gives a message, not a crash" ([bool](Doc (J "pdf4")).pdf_error) "$((Doc (J 'pdf4')).pdf_error)"
+    }
+}
+
+# ---------------------------------------------------------- closing
+# Closing a tab asks about unsaved changes. Closing the window does not, because the
+# work comes back on the next start; it asks only about what could not be kept.
+if (Want "closing") {
+    Write-Host "closing"
+    Set-Content "$Out\work\c1.txt" "saved text`n" -NoNewline
+    $s = @"
+wait 10
+open $w/c1.txt
+wait 5
+key ctrl+end
+type EDIT
+cmd close
+wait 4
+dump $o/cl1.json
+key escape
+wait 3
+cmd new_file
+type a draft
+close_window
+sleep 1500
+dump $o/cl-still-open.json
+quit
+"@
+    $closed = Run "closing" $s
+    Check "closing a tab with unsaved changes asks first" ((J "cl1").dialog_kind -eq "ConfirmClose") "$((J 'cl1').dialog_kind)"
+    Check "closing the window does not ask: the work is kept for the next start" ($closed -and -not (Test-Path "$Out\cl-still-open.json") -and (Get-ChildItem "$Out\profile\config\drafts" -Filter *.json).Count -eq 2) "drafts=$((Get-ChildItem "$Out\profile\config\drafts" -Filter *.json -ErrorAction SilentlyContinue).Count)"
+    if (Run "closing2" "wait 25`ndump $o/cl2.json`nquit" -Keep) {
+        $j = J "cl2"
+        Check "and it is there again afterwards" ((($j.docs | Where-Object { $_.text -eq "a draft" }).Count -eq 1) -and (($j.docs | Where-Object { $_.name -eq "c1.txt" -and $_.dirty -and $_.text -eq "saved text`nEDIT" }).Count -eq 1)) "$($j.docs.name -join ',')"
+    }
+    # with drafts switched off there is nothing to come back to, so the window asks
+    Remove-Item -Recurse -Force "$Out\profile" -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force "$Out\profile\config" | Out-Null
+    Set-Content "$Out\profile\config\settings.json" '{ "hot_exit": false }'
+    Remove-Item "$Out\cl3.json", "$Out\cl4.json" -ErrorAction SilentlyContinue
+    $s = @"
+wait 10
+open $w/c1.txt
+wait 5
+key ctrl+end
+type MORE
+close_window
+sleep 800
+wait 3
+dump $o/cl3.json
+key escape
+wait 3
+dump $o/cl4.json
+quit
+"@
+    if (Run "closing3" $s -Keep) {
+        Check "the window asks when unsaved work could not be kept" ((J "cl3").dialog_kind -eq "ConfirmQuit") "$((J 'cl3').dialog_kind)"
+        Check "Cancel keeps the window and the text" (-not (J "cl4").dialog -and (Doc (J "cl4")).text -eq "saved text`nEDITMORE".Replace("EDIT", "") -and (Get-Content "$Out\work\c1.txt" -Raw) -eq "saved text`n") "$((Doc (J 'cl4')).text)"
+    }
+}
+
+# ------------------------------------------------------------------- logs
+if (Want "logs") {
+    Write-Host "logs"
+    $lines = @(
+        "2026-11-15T10:00:00.000Z INFO  [main] server started port=8080",
+        "2026-11-15T10:00:01.000Z DEBUG [main] cache warmed entries=120",
+        "2026-11-15T10:00:02.000Z WARN  [pool] connection pool nearly exhausted",
+        "2026-11-15T10:00:03.000Z ERROR [worker-1] request failed id=7",
+        "java.lang.IllegalStateException: boom",
+        "`tat com.example.Main.run(Main.java:10)",
+        "2026-11-15T10:00:04.000Z TRACE [main] tick"
+    )
+    Set-Content "$Out\work\app.log" ($lines -join "`n") -NoNewline
+    Set-Content "$Out\work\service-output.txt" ($lines -join "`n") -NoNewline
+    Set-Content "$Out\work\plain.txt" "Just some INFO for you`nand an ERROR in prose`n" -NoNewline
+    if (Run "logs" "open $w/app.log`nwait 25`ndump $o/lg1.json`nshot $o/lg1.png`nopen $w/service-output.txt`nwait 15`ndump $o/lg2.json`nopen $w/plain.txt`nwait 15`ndump $o/lg3.json`nquit") {
+        Check "a .log file uses the log colouring" ((Doc (J "lg1")).syntax -eq "log") "$((Doc (J 'lg1')).syntax)"
+        Check "a file that reads like a log is coloured as one, whatever its name" ((Doc (J "lg2")).syntax -eq "log") "$((Doc (J 'lg2')).syntax)"
+        Check "ordinary text is not mistaken for a log" ((Doc (J "lg3")).syntax -ne "log") "$((Doc (J 'lg3')).syntax)"
+        Add-Type -AssemblyName System.Drawing
+        $bmp = [System.Drawing.Bitmap]::new("$Out\lg1.png")
+        # count strongly red, amber and green pixels in the text area
+        $red = 0; $amber = 0; $green = 0
+        for ($x = 100; $x -lt 900; $x += 2) { for ($y = 100; $y -lt 300; $y += 1) {
+            $c = $bmp.GetPixel($x, $y)
+            if ($c.R -gt 200 -and $c.G -lt 130 -and $c.B -lt 140) { $red++ }
+            elseif ($c.R -gt 190 -and $c.G -gt 130 -and $c.G -lt 215 -and $c.B -lt 110) { $amber++ }
+            elseif ($c.G -gt 150 -and $c.R -lt 140 -and $c.B -lt 170) { $green++ }
+        } }
+        $bmp.Dispose()
+        Check "errors are red, warnings amber and INFO green" ($red -gt 150 -and $amber -gt 60 -and $green -gt 10) "red=$red amber=$amber green=$green"
+    }
+}
+
+# -------------------------------------------------------------- large file
+# A file that is opened in the background, then grows while it is followed.
+if (Want "bigfile") {
+    Write-Host "bigfile"
+    $line = "2026-11-15T10:00:00.000Z INFO  [worker-3] com.example.service.Handler - request completed status=200 path=/api/v1/orders/123 duration=45ms`n"
+    $block = [System.Text.Encoding]::UTF8.GetBytes($line * 8000)
+    $big = "$Out\work\big.log"
+    $fs = [System.IO.File]::Create($big)
+    $count = 0
+    while ($fs.Length -lt 30MB) { $fs.Write($block, 0, $block.Length); $count += 8000 }
+    $fs.Close()
+    Remove-Item "$Out\bg1.json", "$Out\bg2.json" -ErrorAction SilentlyContinue
+    Remove-Item -Recurse -Force "$Out\profile" -ErrorAction SilentlyContinue
+    Set-Content "$Out\bigfile.txt" "open $w/big.log`nwait 1`ndump $o/bg0.json`nsleep 4000`nwait 5`ncmd toggle_follow`nwait 3`ndump $o/bg1.json`nsleep 5000`nwait 5`ndump $o/bg2.json`nquit"
+    $env:INKDOWN_DATA_DIR = "$Out\profile"; $env:INKDOWN_WINDOW = "1280x840"; $env:INKDOWN_AUTOMATION = "$Out\bigfile.txt"
+    $p = Start-Process -FilePath $exe -PassThru
+    $t0 = Get-Date
+    while (-not (Test-Path "$Out\bg1.json") -and ((Get-Date) - $t0).TotalSeconds -lt 60) { Start-Sleep -Milliseconds 200 }
+    Start-Sleep -Milliseconds 300
+    $peak = 0; try { $p.Refresh(); $peak = $p.PeakWorkingSet64 / 1MB } catch {}
+    Add-Content -Path $big -Value "2026-11-15T11:00:00.000Z ERROR [worker-1] appended one`n2026-11-15T11:00:01.000Z WARN  [worker-1] appended two`n" -NoNewline
+    if (-not $p.WaitForExit(60000)) { $p.Kill() }
+    if ((Test-Path "$Out\bg1.json") -and (Test-Path "$Out\bg2.json")) {
+        $a = Doc (J "bg0"); $b = Doc (J "bg1"); $c = Doc (J "bg2")
+        Check "a large file gets its tab at once and is read in the background" ($a.name -eq "big.log" -and $b.lines -eq ($count + 1) -and -not $b.live.loading -and -not $b.read_only -and -not $b.dirty) "first: loading=$($a.live.loading) lines=$($a.lines); then lines=$($b.lines) of $($count + 1)"
+        Check "it is recognised and coloured as a log" ($b.syntax -eq "log") "$($b.syntax)"
+        Check "reading it takes far less memory than three times its size" ($peak -gt 0 -and $peak -lt 30 * 2.2 + 130) ("peak {0:N0} MB for a 30 MB file" -f $peak)
+        Check "lines added to a followed file appear, without a reload" ($c.lines -eq ($count + 3) -and $c.live.updates -eq ($b.live.updates + 1) -and -not $c.dirty) "lines=$($c.lines) updates=$($b.live.updates)->$($c.live.updates)"
+        Check "while following, the caret stays at the end" ($c.sels[0][1] -eq $c.chars -and $c.live.follow) "caret=$($c.sels[0][1]) chars=$($c.chars)"
+    } else { Check "large file run produced its dumps" $false "missing" }
+    Remove-Item $big -ErrorAction SilentlyContinue
+}
+
+# -------------------------------------------------------------------- web
+# Documents from a web address, served by a test server on 127.0.0.1.
+if (Want "web") {
+    Write-Host "web"
+    $py = (Get-Command python -ErrorAction SilentlyContinue).Source
+    if (-not $py) { Write-Host "  skipped: python is needed for the test web server" }
+    else {
+        foreach ($mode in @("range", "plain")) {
+            Remove-Item -Recurse -Force "$Out\web", "$Out\profile" -ErrorAction SilentlyContinue
+            New-Item -ItemType Directory -Force "$Out\web", "$Out\profile\config" | Out-Null
+            Set-Content "$Out\profile\config\settings.json" '{ "live_refresh_seconds": 1 }'
+            Set-Content "$Out\web\app.log" "2026-11-15T10:00:00.000Z INFO  [main] started`n2026-11-15T10:00:01.000Z WARN  [main] slow`n" -NoNewline
+            Set-Content "$Out\web\README.md" "# Served`n`nFrom the test server.`n" -NoNewline
+            Remove-Item "$Out\port.txt", "$Out\wb1.json" -ErrorAction SilentlyContinue
+            $srvArgs = @("`"$PSScriptRoot\fixtures\range_server.py`"", "`"$Out\web`"", "`"$Out\port.txt`"")
+            if ($mode -eq "plain") { $srvArgs += "--no-range" }
+            $srv = Start-Process -FilePath $py -ArgumentList $srvArgs -PassThru -WindowStyle Hidden
+            $t0 = Get-Date
+            while (-not (Test-Path "$Out\port.txt") -and ((Get-Date) - $t0).TotalSeconds -lt 15) { Start-Sleep -Milliseconds 100 }
+            Start-Sleep -Milliseconds 200
+            $port = (Get-Content "$Out\port.txt" -Raw).Trim()
+            $u = "http://127.0.0.1:$port"
+            Set-Content "$Out\web.txt" "cmd open_url $u/app.log`nsleep 2500`nwait 5`ndump $o/wb1.json`nsleep 5000`nwait 5`ndump $o/wb2.json`ntype typed`nwait 3`ncmd open_url $u/README.md`nsleep 2000`nwait 5`ndump $o/wb3.json`ncmd open_url $u/missing.txt`nsleep 2000`nwait 5`ndump $o/wb4.json`ncmd open_url $u/stream.log`nsleep 2600`nwait 5`ndump $o/wb5.json`nsleep 2600`nwait 5`ndump $o/wb6.json`nquit"
+            $env:INKDOWN_DATA_DIR = "$Out\profile"; $env:INKDOWN_WINDOW = "1280x840"; $env:INKDOWN_AUTOMATION = "$Out\web.txt"
+            $p = Start-Process -FilePath $exe -PassThru
+            $t0 = Get-Date
+            while (-not (Test-Path "$Out\wb1.json") -and ((Get-Date) - $t0).TotalSeconds -lt 60) { Start-Sleep -Milliseconds 200 }
+            Add-Content -Path "$Out\web\app.log" -Value "2026-11-15T10:00:02.000Z ERROR [main] added on the server`n" -NoNewline
+            if (-not $p.WaitForExit(60000)) { $p.Kill() }
+            Remove-Item "$Out\port.txt" -ErrorAction SilentlyContinue
+            if (-not $srv.WaitForExit(5000)) { $srv.Kill() }
+            $a = Doc (J "wb1"); $b = (J "wb2").docs | Where-Object { $_.name -eq "app.log" }
+            Check "[$mode] a web address opens as a read-only document, coloured as a log and followed" ($a.name -eq "app.log" -and $a.live.url -eq "$u/app.log" -and $a.read_only -and $a.syntax -eq "log" -and $a.live.follow -and $a.lines -eq 3 -and -not $a.live.error) "$($a.name) lines=$($a.lines) syntax=$($a.syntax) err=$($a.live.error)"
+            Check "[$mode] lines added on the server appear by themselves" ($b.text -like "*added on the server*" -and $b.lines -eq 4 -and $b.sels[0][1] -eq $b.chars) "lines=$($b.lines) updates=$($b.live.updates)"
+            $c = (J "wb3").docs | Where-Object { $_.name -eq "app.log" }
+            Check "[$mode] the document cannot be edited by accident" ($c.text -notlike "*typed*" -and -not $c.dirty)
+            $m = Doc (J "wb3")
+            Check "[$mode] Markdown from a web address opens in Read mode" ($m.name -eq "README.md" -and $m.kind -eq "Markdown" -and $m.mode -eq "read" -and $m.text -like "# Served*") "$($m.name) $($m.kind) $($m.mode)"
+            $e = J "wb4"
+            Check "[$mode] an address with nothing behind it says so" ((($e.toasts -join " ") -like "*no document*") -or ((Doc $e).live.error -like "*no document*")) "$($e.toasts -join ' | ')"
+            $s1 = Doc (J "wb5"); $s2 = Doc (J "wb6")
+            Check "[$mode] a connection the server keeps open is shown as it arrives" ($s1.name -eq "stream.log" -and $s1.live.streaming -and $s1.lines -ge 5 -and $s1.syntax -eq "log" -and $s1.text -like "*connected*tick 0 costs €5*") "streaming=$($s1.live.streaming) lines=$($s1.lines)"
+            Check "[$mode] the stream keeps adding lines, whole characters only, and the view follows" ($s2.lines -ge ($s1.lines + 4) -and $s2.live.streaming -and $s2.text -notmatch "\uFFFD" -and $s2.text -notmatch "`r" -and $s2.sels[0][1] -eq $s2.chars -and ($s2.text -split "connected").Count -eq 2) "lines $($s1.lines) -> $($s2.lines)"
+            Check "[$mode] documents from the web leave no draft files" ((Get-ChildItem "$Out\profile\config\drafts" -Filter *.json -ErrorAction SilentlyContinue).Count -eq 0)
+        }
+    }
+}
+
 # ------------------------------------------------------------------ menus
 # Every item of the main menu, its submenus and the toolbar, by command and by click.
 if (Want "menus") {

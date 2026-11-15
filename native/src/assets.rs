@@ -60,7 +60,7 @@ pub enum State<'a> {
     Failed(Arc<str>),
 }
 
-type Job = Box<dyn FnOnce() -> Result<Raster, String> + Send>;
+pub type Job = Box<dyn FnOnce() -> Result<Raster, String> + Send>;
 
 pub struct Assets {
     slots: HashMap<u64, Slot>,

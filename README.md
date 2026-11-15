@@ -4,7 +4,7 @@
 [![Release](https://img.shields.io/github/v/release/debmalyaroy/inkdown?label=release)](https://github.com/debmalyaroy/inkdown/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/debmalyaroy/inkdown/total)](https://github.com/debmalyaroy/inkdown/releases)
 
-A fast, native editor for **Markdown, code, data and diagrams**. Inkdown is written in pure
+A fast, native editor for **Markdown, code, data, logs and diagrams**. Inkdown is written in pure
 Rust and draws its own interface: there is no web view and no bundled browser, so it starts
 in well under a second and uses a fraction of the memory of an Electron editor.
 
@@ -15,7 +15,7 @@ The animation above is also available as a video: [inkdown-demo.mp4](docs/media/
 
 ## Download
 
-**Current release: [v1.1.0](https://github.com/debmalyaroy/inkdown/releases/latest)** ([release notes](docs/releases/v1.1.0.md), [all releases](https://github.com/debmalyaroy/inkdown/releases))
+**Current release: [v1.2.0](https://github.com/debmalyaroy/inkdown/releases/latest)** ([release notes](docs/releases/v1.2.0.md), [all releases](https://github.com/debmalyaroy/inkdown/releases))
 
 | Platform | Download | Status |
 | --- | --- | --- |
@@ -48,6 +48,7 @@ Checksums for every file are in `SHA256SUMS.txt` on the release page.
 
 | Version | Date | What changed | Notes |
 | --- | --- | --- | --- |
+| [1.2.0](https://github.com/debmalyaroy/inkdown/releases/tag/v1.2.0) | 2026-11-15 | PDF reader, logs in colour, Follow, documents and live streams from a web address, large files (background loading, word wrap, find and replace), new home page | [notes](docs/releases/v1.2.0.md) |
 | [1.1.0](https://github.com/debmalyaroy/inkdown/releases/tag/v1.1.0) | 2026-11-15 | Unsaved work is never lost (draft files, one window per user), Notes and notebooks, a phone interface, look-around in Find | [notes](docs/releases/v1.1.0.md) |
 | [1.0.3](https://github.com/debmalyaroy/inkdown/releases/tag/v1.0.3) | 2026-11-15 | Android package signed with a permanent key, so updates install over the old version | [notes](docs/releases/v1.0.3.md) |
 | [1.0.2](https://github.com/debmalyaroy/inkdown/releases/tag/v1.0.2) | 2026-11-15 | Android: working menus, system theme, touch scrolling, file pickers, print, clipboard. Edit menu on every platform | [notes](docs/releases/v1.0.2.md) |
@@ -90,8 +91,21 @@ Every feature is tracked as a GitHub issue:
   highlight, sub/superscript, emoji shortcodes, LaTeX math.
 - **Diagrams**: Mermaid, Graphviz (DOT) and chart code blocks; a visual diagram designer.
 - **Editor**: multiple cursors, Sublime Text key map (customisable), minimap, code folding,
-  snippets, completions, bookmarks, macros, regex find and replace, Find in Files, Goto
+  snippets, completions, bookmarks, macros, word wrap, Find in Files, Goto
   Anything / Symbol / Definition, build systems, two-pane layout, session restore, AutoSave.
+- **Find and replace**: plain text, match case, whole word, regular expressions (with
+  look-around, back-references and `$1` in replacements), within the selection; Replace
+  and Replace All; select all occurrences for multi-cursor editing. Large files are
+  searched in the background, completely.
+- **Logs**: coloured by severity (errors red, warnings amber, DEBUG dimmed), stack traces
+  with their entry, in any common format and at any size. **Follow** shows new lines as
+  another program writes them, like `tail -f`.
+- **From a web address**: open a document or a log by its `http(s)://` address. It is
+  refreshed while open, only what changed is fetched where the server allows it, and a
+  connection the server keeps open is shown line by line as it arrives.
+- **PDF**: PDF files open as pages with zoom, drawn natively.
+- **Large files**: up to 2 GB on desktop. They are read in the background and need about
+  1.3 times their size in memory (see the measurements below).
 - **Data**: JSON / YAML / TOML tree view with validation, format, minify and conversion;
   CSV / TSV tables; AsciiDoc and HTML preview.
 - **Avro**: `.avro` data files open read-only as a tree of schema and records (codecs
@@ -111,7 +125,11 @@ Every feature is tracked as a GitHub issue:
   installed copy downloads the installer, verifies its checksum and restarts into the new
   version. *Help > Check for Updates* does it on demand. Turn the daily check off with
   `"check_for_updates": false` in *Preferences > Settings*.
-- **Nine themes**, large-file support (a 120,000-line file scrolls at under 8 ms a frame).
+- **Home page**: recent files with their folder, size and age, a filter, and recent folders.
+- **Nine themes**.
+- **Network use**: Inkdown connects to the internet only to look for a new release (once a
+  day, can be switched off), to fetch a web address you open, and for a Google Docs
+  upload you start. Nothing about you or your documents is sent anywhere else.
 
 ### Measured on Windows 11 (release build)
 
@@ -121,6 +139,17 @@ Every feature is tracked as a GitHub issue:
 | Time to first frame | 60 to 80 ms | about 2.6 s |
 | Memory, plain text file | 74 MB | about 417 MB |
 | Memory, the tour page with diagrams | 105 to 120 MB | about 417 MB |
+
+Large files, same machine, version 1.2 (a log of 4.1 million lines is the 500 MB row):
+
+| File | Memory once open | Peak while opening | Notes |
+| --- | --- | --- | --- |
+| No file (welcome page) | 119 MB | 120 MB | idle processor use 0.02 % |
+| 10 MB log | 95 MB | 105 MB | |
+| 100 MB log | 196 MB | 206 MB | |
+| 500 MB log | 656 MB | 667 MB | opens in the background; frames build in about 5 ms while scrolling and typing |
+| 500 MB log, word wrap on | 700 MB | 717 MB | 0.8 s to turn on, edits instant |
+| 500 MB log, find a word | 690 MB | 719 MB | all 173 020 matches in under a second; Replace All in one step |
 
 ## Build from source
 
@@ -155,7 +184,9 @@ Linux needs a few development packages first:
 Yes. The interface, text layout, Markdown, diagram and math rendering are all Rust code
 that is compiled unchanged for Windows, macOS, Linux and Android. Platform-specific code is
 limited to: the Windows installer and file associations, where settings are stored, how a
-browser is located for PDF export, and the Android glue for "Open with". CI builds and runs
+browser is located for PDF export, the one-window-per-user hand-over on desktop, and the
+Android glue for "Open with", the file pickers and web requests (Android's own HTTP client
+is used there; desktop uses a Rust one). CI builds and runs
 the unit tests on Windows, macOS and Linux for every change.
 
 What "it compiles and the tests pass" does not prove is that everything feels right on a
@@ -163,11 +194,13 @@ platform nobody has used it on. That is why macOS and Linux are labelled *previe
 
 ## Tests
 
-- `make test`: 46 unit tests (text buffer, editing commands, Markdown layout, exports, data
-  conversion). Run by CI on Windows, macOS and Linux.
-- `pwsh build.ps1 uitest`: 120 end-to-end checks that drive the real window through a
+- `make test`: 56 unit tests (text buffer, editing commands, Markdown layout, exports, data
+  conversion, log formats, decoding large files in pieces, PDF pages). Run by CI on Windows, macOS and Linux.
+- `pwsh build.ps1 uitest`: 156 end-to-end checks that drive the real window through a
   scripted input driver in an isolated profile: every mode, multi-cursor editing, the
-  designer, session restore, exports and performance budgets. Windows only, run locally
+  designer, drafts after a crash, notes, PDF files, log colours, a large file that grows
+  while it is followed, documents and streams from a test web server, exports and
+  performance budgets. Windows only, run locally
   (GitHub's runners have no GPU for the window).
 - The release workflow installs and uninstalls the Windows installer silently and fails
   the release if either step leaves anything behind.
@@ -195,7 +228,11 @@ platform nobody has used it on. That is why macOS and Linux are labelled *previe
 - No plugin API or language-server support yet.
 - Windows installer and macOS app are not code-signed; the Android APK uses a self-generated key, not a Play Store one.
 - A file can be open in only one pane at a time; layouts have one or two columns.
-- PDF export needs Microsoft Edge, Chrome or Chromium installed.
+- PDF export needs Microsoft Edge, Chrome or Chromium installed. PDF files can be read but
+  not searched, and password-protected ones do not open.
+- Files larger than memory allows cannot be opened. On very large files that are not
+  logs, exact syntax colours arrive after a background pass that can take half a minute.
+- Web addresses that need a login are not supported.
 - Write mode shows raw markup for sub/superscript and emoji shortcodes outside the line
   being edited.
 - macOS: opening a file from Finder starts the app but does not load the file yet.

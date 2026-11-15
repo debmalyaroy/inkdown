@@ -2,6 +2,19 @@
 
 Each release has full notes in `docs/releases/`.
 
+## [1.2.0] - 2026-11-15
+
+See [docs/releases/v1.2.0.md](docs/releases/v1.2.0.md).
+
+- PDF files open as pages, drawn natively.
+- Logs are coloured by severity, in any common format and at any size.
+- Follow: new lines of a file appear as they are written.
+- Open from a web address, refreshed while open; streams are shown as they arrive.
+- Large files: read in the background with a third of the former peak memory; limit
+  raised to 2 GB on desktop; word wrap and Find / Replace All now work on them.
+- A new home page with a proper list of recent files and folders.
+- Closing the window asks about unsaved work only when it could not be kept as a draft.
+
 ## [1.1.0] - 2026-11-15
 
 See [docs/releases/v1.1.0.md](docs/releases/v1.1.0.md).
@@ -61,6 +74,7 @@ First public release. See [docs/releases/v1.0.0.md](docs/releases/v1.0.0.md).
 - Export to HTML, Word, RTF and PDF.
 - Windows installer and portable exe; Android APK; macOS and Linux preview builds.
 
+[1.2.0]: https://github.com/debmalyaroy/inkdown/releases/tag/v1.2.0
 [1.1.0]: https://github.com/debmalyaroy/inkdown/releases/tag/v1.1.0
 [1.0.3]: https://github.com/debmalyaroy/inkdown/releases/tag/v1.0.3
 [1.0.2]: https://github.com/debmalyaroy/inkdown/releases/tag/v1.0.2

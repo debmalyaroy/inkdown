@@ -3,7 +3,7 @@
 //!
 //! Script lines: `wait N`, `open PATH`, `cmd NAME [ARG]`, `type TEXT`, `key COMBO`,
 //! `click X Y`, `dclick X Y`, `rclick X Y`, `drag X1 Y1 X2 Y2`, `move X Y`, `scroll DX DY`,
-//! `shot FILE.png`, `dump FILE.json`, `quit`. `\n` and `\t` in TEXT are expanded.
+//! `shot FILE.png`, `dump FILE.json`, `close_window`, `quit`. `\n` and `\t` in TEXT are expanded.
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -161,7 +161,11 @@ impl Automation {
             // ends this test process abruptly, as a crash or a forced shutdown would:
             // nothing gets a chance to save
             "crash" => std::process::exit(3),
+            // what the close button of the window does
+            "close_window" => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
             "quit" => {
+                // a script that ends means it: no question about unsaved work
+                app.quit_anyway = true;
                 app.quit = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
@@ -199,7 +203,12 @@ pub fn dump(app: &InkApp, ctx: &egui::Context) -> serde_json::Value {
                 "preview_scroll": d.view.md.scroll,
                 "outline": d.view.md.outline.len(),
                 "preview_height": d.view.md.total,
+                "hl_pending": d.hl.pending,
                 "tree_rows": d.view.tree.count,
+                "live": serde_json::json!({ "url": d.live.url, "follow": d.live.follow, "loading": d.live.loading, "streaming": d.live.streaming, "updates": d.live.updates, "error": d.live.error, "consumed": d.live.consumed }),
+                "pdf_pages": d.view.pdf.page_count(),
+                "pdf_page": d.view.pdf.current + 1,
+                "pdf_error": d.view.pdf.error(),
                 "tree_error": d.view.tree.error.as_ref().map(|e| match e.1 { Some(l) => format!("line {l}: {}", e.0), None => e.0.clone() }),
                 "text": if d.buf.len() < 20_000 { serde_json::Value::String(d.buf.text()) } else { serde_json::Value::Null },
             })

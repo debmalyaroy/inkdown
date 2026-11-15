@@ -23,6 +23,7 @@ pub enum Kind {
     Svg,
     Asciidoc,
     Image,
+    Pdf,
     Code,
 }
 
@@ -71,9 +72,15 @@ impl Kind {
             "svg" => Kind::Svg,
             "adoc" | "asciidoc" | "asc" => Kind::Asciidoc,
             "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "ico" => Kind::Image,
+            "pdf" => Kind::Pdf,
             "" if !lower.contains('.') && !first_line.starts_with("#!") && matches!(lower.as_str(), "readme" | "changelog" | "notes" | "todo") => Kind::Markdown,
             _ => Kind::Code,
         }
+    }
+
+    /// Shown as a picture of the file, which has no text to edit.
+    pub fn viewed_only(self) -> bool {
+        matches!(self, Kind::Image | Kind::Pdf)
     }
 
     pub fn modes(self) -> &'static [Mode] {
@@ -81,7 +88,7 @@ impl Kind {
             Kind::Markdown => &[Mode::Read, Mode::Write, Mode::Split, Mode::Code],
             Kind::Svg => &[Mode::Read, Mode::Write, Mode::Split, Mode::Code],
             Kind::Data(_) | Kind::Table(_) | Kind::Mermaid | Kind::Dot | Kind::Asciidoc => &[Mode::Read, Mode::Split, Mode::Code],
-            Kind::Image => &[Mode::Read],
+            Kind::Image | Kind::Pdf => &[Mode::Read],
             Kind::Code => &[Mode::Code],
         }
     }
@@ -99,6 +106,7 @@ impl Kind {
             Kind::Svg => "SVG",
             Kind::Asciidoc => "AsciiDoc",
             Kind::Image => "Image",
+            Kind::Pdf => "PDF",
             Kind::Code => "Code",
         }
     }
@@ -135,6 +143,8 @@ pub struct Doc {
     pub draft: String,
     /// Buffer version last written to the draft file; `None` when no draft file exists.
     pub draft_version: Option<u64>,
+    /// Where the text comes from when it can change under us: a growing file, a web address.
+    pub live: crate::live::Source,
 }
 
 fn next_id() -> u64 {
@@ -234,6 +244,7 @@ impl Doc {
             scratch: false,
             draft: crate::drafts::new_id(),
             draft_version: None,
+            live: Default::default(),
         };
         d.mode = d.default_mode(set);
         d.apply_settings(set, text);
@@ -247,7 +258,7 @@ impl Doc {
                 if self.buf.len() == 0 && m == Mode::Read { Mode::Write } else { m }
             }
             Kind::Code => Mode::Code,
-            Kind::Image => Mode::Read,
+            Kind::Image | Kind::Pdf => Mode::Read,
             _ => Mode::Split,
         }
     }
@@ -291,12 +302,27 @@ impl Doc {
         if meta.is_dir() {
             return Err("folder".into());
         }
-        if meta.len() > 600 * 1024 * 1024 {
-            return Err(format!("{} is too large to open ({} MB).", path.display(), meta.len() / 1024 / 1024));
+        if meta.len() > crate::live::MAX_FILE {
+            return Err(format!("{} is too large to open ({} MB; the limit is {} MB).", path.display(), meta.len() >> 20, crate::live::MAX_FILE >> 20));
+        }
+        let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        // large text is decoded in pieces straight into the buffer
+        if meta.len() >= crate::live::STREAM_FROM && crate::live::text_candidate(path) {
+            if let Some(t) = crate::live::load_file(path, &std::sync::atomic::AtomicU64::new(0))? {
+                let head = t.rope.slice(..t.rope.len_chars().min(64 * 1024)).to_string();
+                let mut d = Self::new(Some(path.to_path_buf()), name, &head, set);
+                d.buf = Buffer::from_rope(t.rope);
+                d.encoding = t.encoding;
+                d.bom = t.bom;
+                d.crlf = t.crlf;
+                d.mtime = meta.modified().ok();
+                d.live.consumed = t.consumed;
+                d.live.sig = t.sig;
+                return Ok(d);
+            }
         }
         let bytes = std::fs::read(path).map_err(|e| format!("Cannot open {}: {e}", path.display()))?;
-        let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-        let is_image = Kind::of(&name, "") == Kind::Image;
+        let is_image = Kind::of(&name, "").viewed_only() || bytes.starts_with(b"%PDF-");
         // an Avro data file is binary: show its schema and records as JSON, read-only
         let avro = if crate::avro::is_container(&bytes) { Some(crate::avro::read(&bytes, AVRO_RECORD_LIMIT)?) } else { None };
         let decoded = match &avro {
@@ -315,7 +341,14 @@ impl Doc {
         d.bom = bom;
         d.crlf = crlf;
         d.mtime = meta.modified().ok();
+        d.live.consumed = bytes.len() as u64;
+        d.live.sig = bytes[bytes.len().saturating_sub(64)..].to_vec();
         if is_image {
+            if bytes.starts_with(b"%PDF-") && d.kind != Kind::Pdf {
+                // a PDF under another name
+                d.kind = Kind::Pdf;
+                d.mode = Mode::Read;
+            }
             d.bytes = Some(bytes.into());
             d.read_only = true;
         }
@@ -397,6 +430,22 @@ impl Doc {
         self.sync_comment_tokens();
     }
 
+    /// Works out kind, mode and syntax again from the name and the text (after text
+    /// that arrived late: a large file, a download).
+    pub fn redetect(&mut self, set: &Settings) {
+        let head = self.buf.slice(0, 4096);
+        let first = head.lines().next().unwrap_or("");
+        let kind = Kind::of(&self.name, first);
+        if kind != self.kind {
+            self.kind = kind;
+            self.view = Default::default();
+        }
+        self.mode = self.default_mode(set);
+        self.hl = Highlighter::new(syntax::find(&self.name, if crate::logs::looks_like_log(&head) { &head } else { first }));
+        self.apply_settings(set, &head);
+        self.sync_comment_tokens();
+    }
+
     pub fn set_syntax(&mut self, name: &str) {
         if let Some(s) = syntax::by_name(name) {
             self.hl = Highlighter::new(s);
@@ -432,6 +481,8 @@ impl Doc {
         self.buf.set_caret(caret.min(self.buf.len()));
         self.buf.mark_saved();
         self.mtime = fresh.mtime;
+        self.live.consumed = fresh.live.consumed;
+        self.live.sig = fresh.live.sig;
         self.bytes = fresh.bytes;
         self.edited_at = None;
         Ok(())

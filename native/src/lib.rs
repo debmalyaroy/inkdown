@@ -7,7 +7,11 @@ pub mod app;
 pub mod drafts;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub mod instance;
+pub mod home;
+pub mod live;
+pub mod logs;
 pub mod notes;
+pub mod pdfview;
 pub mod phone;
 pub mod rx;
 pub mod avro;

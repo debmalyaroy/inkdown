@@ -39,6 +39,10 @@ pub enum Dialog {
     Rename(PathBuf, String),
     NewFile(PathBuf, String, bool),
     ReloadChanged(usize),
+    /// The address being typed.
+    OpenUrl(String),
+    /// The window is closing and some unsaved work cannot be kept for the next start.
+    ConfirmQuit,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -82,6 +86,10 @@ pub struct InkApp {
     user_snippets: serde_json::Value,
     split_ratio: f32,
     last_disk_check: f64,
+    /// For waking the interface from worker threads.
+    pub ctx: egui::Context,
+    /// Time of the current frame, in seconds.
+    pub now: f64,
     pub fullscreen: bool,
     last_sync: (u64, usize, f32),
     pub frame_ms: f32,
@@ -96,6 +104,8 @@ pub struct InkApp {
     ime_keep: Option<(egui::output::IMEOutput, u8)>,
     pub first_frame_ms: Option<f32>,
     pub quit: bool,
+    /// The user chose to close although unsaved work will be lost.
+    pub quit_anyway: bool,
     pub updater: crate::update::Updater,
     /// Smoothed frame figures for the About screen: time to build a frame, time to build
     /// and paint it, and the gap between frames while they follow each other closely.
@@ -176,6 +186,8 @@ impl InkApp {
             user_snippets,
             split_ratio: 0.5,
             last_disk_check: 0.0,
+            ctx: ctx.clone(),
+            now: 0.0,
             fullscreen: false,
             last_sync: (0, 0, 0.0),
             frame_ms: 0.0,
@@ -204,6 +216,7 @@ impl InkApp {
             atlas_resets: 0,
             first_frame_ms: None,
             quit: false,
+            quit_anyway: false,
             atlas: (0.0, None, 0.0),
         };
         if app.set.hot_exit && std::env::var_os("INKDOWN_NO_SESSION").is_none() {
@@ -234,7 +247,30 @@ impl InkApp {
         self.docs.get_mut(self.active)
     }
 
+    /// Opens the document at a web address in a tab that follows the server.
+    pub fn open_url(&mut self, ctx: &egui::Context, url: &str) -> bool {
+        if !crate::live::is_url(url) {
+            self.toast("Web addresses start with http:// or https://");
+            return false;
+        }
+        if let Some(i) = self.docs.iter().position(|d| d.live.url.as_deref() == Some(url)) {
+            self.active = i;
+            return true;
+        }
+        if self.docs.len() == 1 && self.docs[0].scratch && self.docs[0].name == "Welcome.md" {
+            self.docs.clear();
+        }
+        let c = ctx.clone();
+        self.docs.push(crate::live::remote_doc(url, &self.set, move || c.request_repaint()));
+        self.active = self.docs.len() - 1;
+        true
+    }
+
     pub fn open_path(&mut self, path: &Path) -> bool {
+        if crate::live::is_url(&path.to_string_lossy()) {
+            let ctx = self.ctx.clone();
+            return self.open_url(&ctx, &path.to_string_lossy());
+        }
         let path = std::fs::canonicalize(path).map(strip_unc).unwrap_or_else(|_| path.to_path_buf());
         if path.is_dir() {
             self.sidebar.set_folder(Some(path.clone()));
@@ -250,7 +286,15 @@ impl InkApp {
             self.active = i;
             return true;
         }
-        match Doc::open(&path, &self.set) {
+        // a large file gets its tab at once and its text when it has been read
+        let len = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        let opened = if crate::live::opens_in_background(&path, len) {
+            let c = self.ctx.clone();
+            Ok(crate::live::placeholder(&path, len, &self.set, move || c.request_repaint()))
+        } else {
+            Doc::open(&path, &self.set)
+        };
+        match opened {
             Ok(d) => {
                 // a pristine welcome tab gives way to the first real file
                 if self.docs.len() == 1 && self.docs[0].scratch && self.docs[0].name == "Welcome.md" {
@@ -351,6 +395,18 @@ impl InkApp {
 
     pub fn save_doc(&mut self, ix: usize, force_dialog: bool) -> bool {
         let Some(d) = self.docs.get_mut(ix) else { return false };
+        // a document from a web address is saved as a copy, which then is an ordinary file
+        if let Some(url) = d.live.url.take() {
+            d.read_only = false;
+            let saved = self.save_doc(ix, true);
+            if !saved && !cfg!(any(target_os = "android", target_os = "ios")) {
+                if let Some(d) = self.docs.get_mut(ix) {
+                    d.live.url = Some(url);
+                    d.read_only = true;
+                }
+            }
+            return saved;
+        }
         if d.read_only {
             self.toast("This file is read-only.");
             return false;
@@ -450,6 +506,13 @@ impl InkApp {
         }
     }
 
+    /// Documents with unsaved changes that would be lost if the window closed now:
+    /// those no draft file protects (drafts are switched off, or the document is too
+    /// large for one, or the draft could not be written).
+    pub fn unprotected(&self) -> Vec<usize> {
+        self.docs.iter().enumerate().filter(|(_, d)| !d.scratch && !d.read_only && d.buf.len() > 0 && (d.dirty() || d.path.is_none()) && (!self.set.hot_exit || d.draft_version != Some(d.buf.version))).map(|(i, _)| i).collect()
+    }
+
     pub fn close_tab(&mut self, ix: usize) {
         match self.docs.get(ix) {
             Some(d) if d.dirty() => {
@@ -471,10 +534,20 @@ impl InkApp {
         // unsaved text lives in draft files, one per document
         let mut drafts: std::collections::HashMap<String, crate::drafts::Draft> = crate::drafts::load_all().into_iter().map(|d| (d.id.clone(), d)).collect();
         for t in &s.tabs {
+            if let Some(url) = &t.url {
+                let ctx = self.ctx.clone();
+                self.open_url(&ctx, url);
+                continue;
+            }
             let draft = t.draft.as_ref().and_then(|id| drafts.remove(id));
             let text = draft.as_ref().map(|d| d.text.clone()).or_else(|| t.unsaved.clone());
             let id = draft.map(|d| d.id);
             self.restore_tab(t.path.as_deref(), &t.name, text, id, &t.mode, t.caret);
+            if t.follow {
+                if let Some(d) = self.docs.last_mut().filter(|d| d.path.as_ref().map(|p| p.to_string_lossy().to_string()) == t.path) {
+                    d.live.follow = true;
+                }
+            }
         }
         // drafts no tab points at: left by a crash, a forced shutdown or another window
         let mut orphans: Vec<crate::drafts::Draft> = drafts.into_values().filter(|d| !crate::drafts::writer_alive(d.pid)).collect();
@@ -569,8 +642,10 @@ impl InkApp {
         let tabs: Vec<SessionTab> = self
             .docs
             .iter()
-            .filter(|d| !d.scratch && (d.path.is_some() || d.buf.len() > 0))
+            .filter(|d| !d.scratch && (d.path.is_some() || d.buf.len() > 0 || d.live.remote()))
             .map(|d| SessionTab {
+                url: d.live.url.clone(),
+                follow: d.live.follow,
                 path: d.path.as_ref().map(|p| p.to_string_lossy().to_string()),
                 name: d.name.clone(),
                 unsaved: None,
@@ -582,7 +657,7 @@ impl InkApp {
             .collect();
         let session = Session { folder: self.sidebar.folder.as_ref().map(|p| p.to_string_lossy().to_string()), active: self.active, tabs };
         // carets move all the time; only what a restart needs decides whether to write
-        let key = format!("{:?}|{}|{:?}", session.folder, session.active, session.tabs.iter().map(|t| (&t.path, &t.name, &t.draft, &t.mode)).collect::<Vec<_>>());
+        let key = format!("{:?}|{}|{:?}", session.folder, session.active, session.tabs.iter().map(|t| (&t.path, &t.name, &t.draft, &t.mode, &t.url, t.follow)).collect::<Vec<_>>());
         if key != self.session_key {
             self.session_key = key;
             session.save();
@@ -761,6 +836,8 @@ impl InkApp {
                     self.active = if name == "next_tab" { (self.active + 1) % n } else { (self.active + n - 1) % n };
                 }
             }
+            "open_url" | "toggle_follow" | "reload_now" => crate::live::command(self, ctx, name, arg),
+            "revert" if self.docs.get(self.active).is_some_and(|d| d.live.remote()) => crate::live::command(self, ctx, "reload_now", ""),
             "revert" => {
                 let set = self.set.clone();
                 if let Some(d) = self.doc() {
@@ -781,6 +858,10 @@ impl InkApp {
             "set_line_endings" => self.picker = Some(Picker::new(PickKind::LineEndings, self)),
             "set_indentation" => self.picker = Some(Picker::new(PickKind::Indent, self)),
             "open_recent" => self.picker = Some(Picker::new(PickKind::Recent, self)),
+            "clear_recent" => {
+                self.set.recent_files.clear();
+                self.set.recent_folders.clear();
+            }
             "new_from_template" => self.picker = Some(Picker::new(PickKind::Templates, self)),
             "insert_snippet" => self.picker = Some(Picker::new(PickKind::Snippets, self)),
             "build_with" => self.picker = Some(Picker::new(PickKind::Builds, self)),
@@ -788,7 +869,7 @@ impl InkApp {
             "show_find" | "show_replace" => {
                 if let Some(d) = self.doc() {
                     if d.mode == Mode::Read || d.mode == Mode::Write {
-                        if d.kind == Kind::Image {
+                        if d.kind.viewed_only() {
                             return;
                         }
                         d.mode = if d.kind.modes().contains(&Mode::Split) { Mode::Split } else { Mode::Code };
@@ -1100,13 +1181,26 @@ impl InkApp {
                 ctx.request_repaint_after(std::time::Duration::from_secs_f64(s.max(0.05)));
             }
         }
+        // large files being read, files that are followed, documents from a web address
+        self.now = now;
+        crate::live::tick(self, ctx, now);
         // files changed by other programs
         if now - self.last_disk_check > 1.5 && ctx.input(|i| i.focused) {
             self.last_disk_check = now;
             let set = self.set.clone();
             let mut ask = None;
             for (i, d) in self.docs.iter_mut().enumerate() {
+                if d.live.follow || d.live.loading || d.live.job.is_some() || d.live.remote() {
+                    continue;
+                }
                 if d.changed_on_disk() {
+                    // large files: read what was added, or read again, off this thread
+                    if !d.dirty() && d.live.consumed >= crate::live::STREAM_FROM / 4 {
+                        d.mtime = d.path.as_ref().and_then(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok());
+                        let c = ctx.clone();
+                        crate::live::start(d, move || c.request_repaint());
+                        continue;
+                    }
                     if d.dirty() {
                         d.mtime = d.path.as_ref().and_then(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok());
                         ask = Some(i);
@@ -1180,7 +1274,15 @@ impl InkApp {
         let lost_focus = self.was_focused && !focused;
         self.was_focused = focused;
         self.persist(now, closing || lost_focus || self.quit);
-        if closing {
+        // Closing the window does not ask about unsaved work, because it comes back with
+        // the next start. Only what cannot be kept that way is worth a question.
+        if closing && !self.quit_anyway && !self.unprotected().is_empty() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.quit = false;
+            if !matches!(self.dialog, Some(Dialog::ConfirmQuit)) {
+                self.dialog = Some(Dialog::ConfirmQuit);
+            }
+        } else if closing {
             // carets and scroll positions are worth one last write
             self.session_key.clear();
             self.save_session();
@@ -1340,6 +1442,11 @@ impl InkApp {
             Kind::Image => {
                 if let Some(b) = d.bytes.clone() {
                     preview::canvas(ui, &mut d.view.canvas, id, CanvasSource::Image(b), &mut cx);
+                }
+            }
+            Kind::Pdf => {
+                if let Some(b) = d.bytes.clone() {
+                    crate::pdfview::show(ui, &mut d.view.pdf, id, &b, &mut cx);
                 }
             }
             Kind::Code => {}
@@ -1524,7 +1631,7 @@ impl InkApp {
     fn pane_view(&mut self, ui: &mut Ui) {
         let pal = self.pal;
         let Some(d) = self.docs.get(self.active) else {
-            egui::CentralPanel::default().frame(egui::Frame::new().fill(pal.bg)).show(ui, |ui| crate::shell::empty_state(ui, self));
+            egui::CentralPanel::default().frame(egui::Frame::new().fill(pal.bg)).show(ui, |ui| crate::home::show(ui, self));
             return;
         };
         let mode = if d.kind.modes().contains(&d.mode) { d.mode } else { d.kind.modes()[0] };

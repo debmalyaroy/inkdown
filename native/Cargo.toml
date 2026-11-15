@@ -1,6 +1,6 @@
 [package]
 name = "inkdown-native"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2021"
 description = "Inkdown: a universal editor with a pure-Rust UI and renderer (no web view)"
 license = "GPL-3.0-or-later"
@@ -43,6 +43,8 @@ latex-rust = "=2.1.1"
 # Avro data files: block codecs
 flate2 = "1"
 snap = "1"
+# PDF: reading pages
+hayro = "0.9"
 
 [target.'cfg(target_os = "android")'.dependencies]
 eframe = { version = "0.37", default-features = false, features = ["default_fonts", "system_fonts", "android-native-activity"] }
@@ -60,6 +62,9 @@ arboard = { version = "3", default-features = false }
 sha2 = "0.10"
 getrandom = "0.3"
 percent-encoding = "2"
+
+[target.'cfg(target_os = "ios")'.dependencies]
+ureq = { version = "3", features = ["json"] }
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.56"

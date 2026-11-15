@@ -42,6 +42,11 @@ pub fn forward(files: &[PathBuf]) -> bool {
     let mut msg = format!("{HELLO}\n");
     for f in files {
         // the other process has a different working folder
+        if crate::live::is_url(&f.to_string_lossy()) {
+            msg.push_str(&f.to_string_lossy());
+            msg.push('\n');
+            continue;
+        }
         let full = std::fs::canonicalize(f).unwrap_or_else(|_| std::env::current_dir().map(|d| d.join(f)).unwrap_or_else(|_| f.clone()));
         msg.push_str(&full.to_string_lossy());
         msg.push('\n');

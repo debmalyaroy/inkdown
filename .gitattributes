@@ -8,3 +8,4 @@
 *.woff2 binary
 assets/vendor/** linguist-vendored
 *.avro binary
+*.pdf binary

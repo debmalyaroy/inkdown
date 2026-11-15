@@ -154,6 +154,7 @@ pub fn file_icon(name: &str, is_dir: bool, open: bool) -> &'static str {
         Kind::Data(_) => icons::FILE_JSON,
         Kind::Table(_) => icons::FILE_SPREADSHEET,
         Kind::Image | Kind::Svg => icons::FILE_IMAGE,
+        Kind::Pdf => icons::FILE_TEXT,
         Kind::Mermaid | Kind::Dot => icons::WORKFLOW,
         Kind::Code => {
             let l = name.to_lowercase();

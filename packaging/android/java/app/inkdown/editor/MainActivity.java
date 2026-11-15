@@ -174,4 +174,107 @@ public class MainActivity extends NativeActivity {
             }
         });
     }
+
+    /** Open web connections of documents read from a server, by id. */
+    private final java.util.HashMap<Integer, Object[]> http = new java.util.HashMap<Integer, Object[]>();
+    private int httpNext = 1;
+
+    /**
+     * Asks for a web address (documents opened from a server) and returns an id for the
+     * answer once its headers are in. Called from worker threads of the native side, never
+     * from the UI thread. httpHead gives status and headers, httpRead the body piece by
+     * piece as it arrives (a server may keep sending for as long as it likes), httpClose ends it.
+     */
+    public int httpOpen(String url, long from, String etag, String modified) {
+        java.net.HttpURLConnection c = null;
+        String head;
+        java.io.InputStream in = null;
+        try {
+            c = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+            c.setConnectTimeout(15000);
+            // no read timeout: a stream may be quiet for a long time
+            c.setReadTimeout(0);
+            c.setInstanceFollowRedirects(true);
+            c.setRequestProperty("User-Agent", "Inkdown");
+            c.setRequestProperty("Accept", "text/*, application/json, */*;q=0.8");
+            // the native side counts bytes of the document itself
+            c.setRequestProperty("Accept-Encoding", "identity");
+            if (from > 0) {
+                c.setRequestProperty("Range", "bytes=" + from + "-");
+                String validator = etag.length() > 0 ? etag : modified;
+                if (validator.length() > 0) {
+                    c.setRequestProperty("If-Range", validator);
+                }
+            } else {
+                if (etag.length() > 0) {
+                    c.setRequestProperty("If-None-Match", etag);
+                }
+                if (modified.length() > 0) {
+                    c.setRequestProperty("If-Modified-Since", modified);
+                }
+            }
+            int status = c.getResponseCode();
+            head = status + "\n" + line(c.getHeaderField("ETag")) + "\n" + line(c.getHeaderField("Last-Modified")) + "\n" + line(c.getHeaderField("Content-Range"));
+            if (status >= 200 && status < 300) {
+                in = c.getInputStream();
+            }
+        } catch (Exception e) {
+            head = "0\n" + line(e.toString()) + "\n\n";
+        }
+        synchronized (http) {
+            int id = httpNext++;
+            http.put(id, new Object[] { head, c, in });
+            return id;
+        }
+    }
+
+    public String httpHead(int id) {
+        synchronized (http) {
+            Object[] entry = http.get(id);
+            return entry == null ? "0\nclosed\n\n" : (String) entry[0];
+        }
+    }
+
+    /** The next piece of the body: empty at its end, null when the connection failed. */
+    public byte[] httpRead(int id, int max) {
+        java.io.InputStream in;
+        synchronized (http) {
+            Object[] entry = http.get(id);
+            in = entry == null ? null : (java.io.InputStream) entry[2];
+        }
+        if (in == null) {
+            return new byte[0];
+        }
+        try {
+            byte[] buf = new byte[Math.max(1, Math.min(max, 64 * 1024))];
+            int n = in.read(buf);
+            return n <= 0 ? new byte[0] : java.util.Arrays.copyOf(buf, n);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    public void httpClose(int id) {
+        Object[] entry;
+        synchronized (http) {
+            entry = http.remove(id);
+        }
+        if (entry == null) {
+            return;
+        }
+        try {
+            if (entry[2] != null) {
+                ((java.io.InputStream) entry[2]).close();
+            }
+        } catch (Exception e) {
+            // closing a connection that is already gone
+        }
+        if (entry[1] != null) {
+            ((java.net.HttpURLConnection) entry[1]).disconnect();
+        }
+    }
+
+    private static String line(String s) {
+        return s == null ? "" : s.replace('\n', ' ').replace('\r', ' ');
+    }
 }

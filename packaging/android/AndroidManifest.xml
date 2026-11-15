@@ -7,10 +7,14 @@
 
     <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="34" />
 
+    <!-- Only for documents the user opens from a web address. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:label="Inkdown"
         android:icon="@mipmap/ic_launcher"
         android:hasCode="true"
+        android:usesCleartextTraffic="true"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
 
         <activity
@@ -41,6 +45,7 @@
                 <data android:scheme="content" android:mimeType="application/toml" />
                 <data android:scheme="content" android:mimeType="image/svg+xml" />
                 <data android:scheme="content" android:mimeType="application/octet-stream" />
+                <data android:scheme="content" android:mimeType="application/pdf" />
             </intent-filter>
         </activity>
     </application>

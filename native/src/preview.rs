@@ -20,6 +20,7 @@ pub struct ViewState {
     pub tree: TreeView,
     pub table: TableView,
     pub canvas: Canvas,
+    pub pdf: crate::pdfview::PdfView,
     pub rich: Option<Box<crate::rich::Rich>>,
     pub design: Option<Box<crate::designer::Designer>>,
 }

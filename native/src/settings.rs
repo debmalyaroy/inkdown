@@ -60,6 +60,10 @@ pub struct Settings {
     pub trim_trailing_white_space_on_save: bool,
     pub ensure_newline_at_eof_on_save: bool,
     pub hot_exit: bool,
+    /// Documents opened from a web address are fetched again while they are open.
+    pub live_refresh: bool,
+    /// Seconds between two looks at a web address.
+    pub live_refresh_seconds: f64,
     /// Look for a newer release once a day (a plain request to GitHub; nothing is sent).
     pub check_for_updates: bool,
     pub show_sidebar: bool,
@@ -112,6 +116,8 @@ impl Default for Settings {
             trim_trailing_white_space_on_save: false,
             ensure_newline_at_eof_on_save: false,
             hot_exit: true,
+            live_refresh: true,
+            live_refresh_seconds: 3.0,
             check_for_updates: true,
             show_sidebar: false,
             show_status_bar: true,
@@ -252,6 +258,10 @@ pub struct SessionTab {
     pub unsaved: Option<String>,
     /// The draft file holding this tab's unsaved text, if it has any.
     pub draft: Option<String>,
+    /// The web address of a document that was opened from one.
+    pub url: Option<String>,
+    /// The tab was following its source (new lines appear as they are written).
+    pub follow: bool,
     pub caret: usize,
     pub scroll: f32,
     pub mode: String,
