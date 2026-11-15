@@ -31,6 +31,50 @@ public class MainActivity extends NativeActivity {
     /** Kept alive until its page has been handed to the print system. */
     private WebView printView;
 
+    @Override
+    protected void onCreate(android.os.Bundle state) {
+        super.onCreate(state);
+        useFastestRefreshRate();
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean focused) {
+        super.onWindowFocusChanged(focused);
+        if (focused) {
+            useFastestRefreshRate();
+        }
+    }
+
+    /**
+     * Asks for the highest refresh rate the screen has at its present resolution. Without
+     * this, phones with a 90 or 120 Hz screen hold an app that draws its own surface at
+     * 60 frames a second, and scrolling looks slow next to every other app.
+     */
+    private void useFastestRefreshRate() {
+        try {
+            android.view.Display display = getWindowManager().getDefaultDisplay();
+            android.view.Display.Mode now = display.getMode();
+            android.view.Display.Mode best = now;
+            for (android.view.Display.Mode m : display.getSupportedModes()) {
+                if (m.getPhysicalWidth() == now.getPhysicalWidth() && m.getPhysicalHeight() == now.getPhysicalHeight()
+                        && m.getRefreshRate() > best.getRefreshRate() + 0.5f) {
+                    best = m;
+                }
+            }
+            android.view.WindowManager.LayoutParams lp = getWindow().getAttributes();
+            lp.preferredDisplayModeId = best.getModeId();
+            lp.preferredRefreshRate = best.getRefreshRate();
+            getWindow().setAttributes(lp);
+            if (android.os.Build.VERSION.SDK_INT >= 35) {
+                // screens that vary their rate also want to be told that this window moves
+                // (the method is newer than the SDK this file is compiled against)
+                getWindow().getClass().getMethod("setFrameRateBoostOnTouchEnabled", boolean.class).invoke(getWindow(), true);
+            }
+        } catch (Throwable e) {
+            // an unusual display: the default rate is fine
+        }
+    }
+
     /** "Open with Inkdown" while Inkdown is already running. */
     @Override
     protected void onNewIntent(Intent intent) {

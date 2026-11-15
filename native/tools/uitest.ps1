@@ -540,7 +540,7 @@ if (Want "pdf") {
 wait 10
 open $w/sample.pdf
 wait 30
-sleep 1500
+sleep 3000
 wait 5
 dump $o/pdf1.json
 shot $o/pdf1.png
@@ -576,6 +576,64 @@ quit
         Check "the PDF file is never rewritten" ((Get-FileHash "$Out\work\sample.pdf").Hash -eq $before)
         Check "a PDF under another name is recognised" ((Doc (J "pdf3")).kind -eq "PDF" -and (Doc (J "pdf3")).pdf_pages -eq 3) "$((Doc (J 'pdf3')).kind)"
         Check "a damaged PDF gives a message, not a crash" ([bool](Doc (J "pdf4")).pdf_error) "$((Doc (J 'pdf4')).pdf_error)"
+    }
+    # the text of a PDF: search, selection, and a file protected by a password
+    Copy-Item (Join-Path $PSScriptRoot "fixtures\locked.pdf") "$Out\work\locked.pdf" -Force
+    $s = @"
+wait 10
+open $w/sample.pdf
+wait 30
+sleep 1200
+wait 5
+cmd show_find
+wait 5
+type PAGE
+wait 5
+key enter
+wait 5
+dump $o/pdf5.json
+key enter
+wait 8
+dump $o/pdf6.json
+key escape
+wait 3
+dump $o/pdf7.json
+quit
+"@
+    if (Run "pdf-find" $s) {
+        $a = Doc (J "pdf5"); $b = Doc (J "pdf6")
+        Check "Find searches the text of every page of a PDF" ($a.pdf_text_pages -eq 3 -and $a.pdf_matches -eq 3 -and $a.pdf_match -eq 1) "text pages=$($a.pdf_text_pages) matches=$($a.pdf_matches) at=$($a.pdf_match)"
+        Check "Enter moves to the next match, on the next page" ($b.pdf_match -eq 2 -and $b.pdf_page -eq 2) "match=$($b.pdf_match) page=$($b.pdf_page)"
+        # drag across the title of the first page to select it
+        $f = (Doc (J "pdf1")).pdf_first_page   # where the first page is before any scrolling
+        if ($f) {
+            $x0 = [int]($f[0] + 40 * $f[2]); $x1 = [int]($f[0] + 560 * $f[2]); $y = [int]($f[1] + 80 * $f[2])
+            if (Run "pdf-select" "wait 10`nopen $w/sample.pdf`nwait 30`nsleep 1200`nwait 5`ndrag $x0 $y $x1 $y`nwait 12`ndump $o/pdf8.json`nquit") {
+                Check "dragging over text in a PDF selects it" ((Doc (J "pdf8")).pdf_selection -eq "Inkdown sample, page 1") "$((Doc (J 'pdf8')).pdf_selection)"
+            }
+        } else { Check "dragging over text in a PDF selects it" $false "no page position" }
+    }
+    $s = @"
+wait 10
+open $w/locked.pdf
+wait 20
+dump $o/pdf9.json
+type wrong
+key enter
+wait 15
+dump $o/pdf10.json
+type inkdown
+key enter
+wait 30
+sleep 800
+wait 5
+dump $o/pdf11.json
+quit
+"@
+    if (Run "pdf-locked" $s) {
+        Check "a protected PDF asks for its password" ((Doc (J "pdf9")).pdf_needs_password -and (Doc (J "pdf9")).pdf_pages -eq 0)
+        Check "a wrong password is refused" ((Doc (J "pdf10")).pdf_needs_password)
+        Check "the right password opens it" ((Doc (J "pdf11")).pdf_pages -eq 3 -and -not (Doc (J "pdf11")).pdf_needs_password -and (Doc (J "pdf11")).pdf_text_pages -eq 3) "pages=$((Doc (J 'pdf11')).pdf_pages)"
     }
 }
 

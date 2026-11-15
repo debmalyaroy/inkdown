@@ -866,6 +866,18 @@ impl InkApp {
             "insert_snippet" => self.picker = Some(Picker::new(PickKind::Snippets, self)),
             "build_with" => self.picker = Some(Picker::new(PickKind::Builds, self)),
             "goto_definition" => crate::project::goto_definition(self),
+            // a PDF has its own search, over the text of its pages
+            "show_find" | "show_replace" if self.docs.get(self.active).is_some_and(|d| d.kind == Kind::Pdf) => {
+                if let Some(d) = self.doc() {
+                    d.view.pdf.open_find();
+                }
+            }
+            "find_next" | "find_prev" if self.docs.get(self.active).is_some_and(|d| d.kind == Kind::Pdf) => {
+                if let Some(d) = self.doc() {
+                    d.view.pdf.open_find();
+                    d.view.pdf.find_step(name == "find_next");
+                }
+            }
             "show_find" | "show_replace" => {
                 if let Some(d) = self.doc() {
                     if d.mode == Mode::Read || d.mode == Mode::Write {

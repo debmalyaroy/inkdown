@@ -30,7 +30,9 @@ pub enum Sheet {
 /// True when the phone layout should be used for this window.
 pub fn active(ctx: &egui::Context) -> bool {
     let forced = std::env::var_os("INKDOWN_PHONE").is_some();
-    (cfg!(any(target_os = "android", target_os = "ios")) || forced) && ctx.content_rect().width() < 720.0
+    // the short side decides: a phone held sideways is wide, but it is still a phone
+    let size = ctx.content_rect().size();
+    (cfg!(any(target_os = "android", target_os = "ios")) || forced) && size.x.min(size.y) < 600.0
 }
 
 /// Bigger targets and text for fingers. Called when the style has just been applied.

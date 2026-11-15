@@ -144,6 +144,30 @@ fn parse_line(state: &mut ParseState, stack: &mut ScopeStack, line: &str) -> Spa
     out.into()
 }
 
+/// Runs the parser over block `block` of the rope, moving `st` and `stack` to its end.
+fn parse_block(rope: &ropey::Rope, block: usize, st: &mut ParseState, stack: &mut ScopeStack) {
+    let lines = rope.len_lines();
+    let from = block * STEP;
+    for line in rope.lines_at(from.min(lines)).take(STEP.min(lines.saturating_sub(from))) {
+        // most lines live in one chunk of the rope and need no copy
+        let owned;
+        let l: &str = match line.as_str() {
+            Some(s) => s,
+            None => {
+                owned = line.to_string();
+                &owned
+            }
+        };
+        if l.len() <= MAX_LINE {
+            if let Ok(ops) = st.parse_line(l, set()) {
+                for (_, op) in ops {
+                    let _ = stack.apply(&op);
+                }
+            }
+        }
+    }
+}
+
 struct Worker {
     rx: std::sync::mpsc::Receiver<Vec<(ParseState, ScopeStack)>>,
     generation: u64,
@@ -242,33 +266,101 @@ impl Highlighter {
         let shared = self.generation.clone();
         let mine = shared.load(std::sync::atomic::Ordering::Relaxed);
         let (tx, rx) = std::sync::mpsc::channel();
+        let syntax = self.syntax;
         let spawned = std::thread::Builder::new().name("ink-syntax".into()).spawn(move || {
             let lines = rope.len_lines();
-            let mut batch = Vec::with_capacity(8);
-            loop {
-                let from = block * STEP;
-                if from >= lines {
-                    break;
-                }
-                for i in from..(from + STEP).min(lines) {
-                    let l = rope.line(i).to_string();
-                    if l.len() <= MAX_LINE {
-                        if let Ok(ops) = st.parse_line(&l, set()) {
-                            for (_, op) in ops {
-                                let _ = stack.apply(&op);
-                            }
-                        }
-                    }
-                }
-                batch.push((st.clone(), stack.clone()));
-                block += 1;
-                if batch.len() >= 8 {
-                    if shared.load(std::sync::atomic::Ordering::Relaxed) != mine || tx.send(std::mem::take(&mut batch)).is_err() {
+            let blocks = lines.div_ceil(STEP);
+            let cancelled = || shared.load(std::sync::atomic::Ordering::Relaxed) != mine;
+            let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).min(8);
+            let remaining = blocks.saturating_sub(block);
+            if remaining < 4000 || threads < 2 {
+                // a file of ordinary size: one pass, results handed over as they come
+                let mut batch = Vec::with_capacity(8);
+                while block < blocks {
+                    parse_block(&rope, block, &mut st, &mut stack);
+                    batch.push((st.clone(), stack.clone()));
+                    block += 1;
+                    if batch.len() >= 8 && (cancelled() || tx.send(std::mem::take(&mut batch)).is_err()) {
                         return;
                     }
                 }
+                let _ = tx.send(batch);
+                return;
             }
-            let _ = tx.send(batch);
+            // A very large file is parsed in several parts at once. Only the first part
+            // knows the true state it starts in; the others guess "outside everything",
+            // which is right unless the part begins inside a comment or string that
+            // started earlier. Afterwards the parts are joined in order: where a guess
+            // was wrong, that part is parsed again from the true state until both agree,
+            // which usually takes a few lines.
+            let per = remaining.div_ceil(threads);
+            let bounds: Vec<(usize, usize)> = (0..threads).map(|t| (block + t * per, (block + (t + 1) * per).min(blocks))).filter(|(a, b)| a < b).collect();
+            let fresh = (ParseState::new(syntax), ScopeStack::new());
+            std::thread::scope(|scope| {
+                let guessed: Vec<_> = bounds[1..]
+                    .iter()
+                    .map(|&(a, b)| {
+                        let (rope, fresh, cancelled) = (&rope, fresh.clone(), &cancelled);
+                        scope.spawn(move || {
+                            let (mut st, mut stack) = fresh;
+                            let mut out = Vec::with_capacity(b - a);
+                            for blk in a..b {
+                                if blk % 64 == 0 && cancelled() {
+                                    break;
+                                }
+                                parse_block(rope, blk, &mut st, &mut stack);
+                                out.push((st.clone(), stack.clone()));
+                            }
+                            out
+                        })
+                    })
+                    .collect();
+                // the first part, from the known state, handed over as it comes
+                let (a, b) = bounds[0];
+                let mut batch = Vec::with_capacity(64);
+                for blk in a..b {
+                    parse_block(&rope, blk, &mut st, &mut stack);
+                    batch.push((st.clone(), stack.clone()));
+                    if batch.len() >= 64 && (cancelled() || tx.send(std::mem::take(&mut batch)).is_err()) {
+                        return;
+                    }
+                }
+                if tx.send(batch).is_err() {
+                    return;
+                }
+                for (part, handle) in guessed.into_iter().enumerate() {
+                    let Ok(mut guess) = handle.join() else { return };
+                    let (a, b) = bounds[part + 1];
+                    if cancelled() || guess.len() != b - a {
+                        return;
+                    }
+                    if (st.clone(), stack.clone()) != fresh {
+                        // the guess was wrong at the start: parse again until both agree
+                        let mut agreed = None;
+                        for (k, blk) in (a..b).enumerate() {
+                            if k % 64 == 0 && cancelled() {
+                                return;
+                            }
+                            parse_block(&rope, blk, &mut st, &mut stack);
+                            if guess[k].0 == st && guess[k].1 == stack {
+                                agreed = Some(k);
+                                break;
+                            }
+                            guess[k] = (st.clone(), stack.clone());
+                        }
+                        if agreed.is_none() && guess.is_empty() {
+                            return;
+                        }
+                    }
+                    if let Some(last) = guess.last() {
+                        st = last.0.clone();
+                        stack = last.1.clone();
+                    }
+                    if tx.send(guess).is_err() {
+                        return;
+                    }
+                }
+            });
         });
         if spawned.is_ok() {
             self.worker = Some(Worker { rx, generation: mine });
@@ -431,6 +523,60 @@ pub fn comment_tokens(syntax_name: &str) -> (Option<&'static str>, Option<(&'sta
 #[cfg(test)]
 mod bench {
     use super::*;
+
+    /// A very large file is parsed in parts at once; the joined result must be exactly
+    /// what one pass from the top gives, also where a part begins inside a comment.
+    #[test]
+    fn large_files_parse_in_parts_like_in_one_pass() {
+        let mut text = String::new();
+        let mut i = 0;
+        // 160 000 lines: ordinary code, with block comments and strings of every length,
+        // some of them thousands of lines long so that they cross the borders of the parts
+        while i < 160_000 {
+            text.push_str(&format!("pub fn item_{i}(x: u32) -> u32 {{ x + {i} }} // tail\n"));
+            i += 1;
+            if i % 9973 == 0 {
+                text.push_str("/* a long comment starts\n");
+                for k in 0..7000 {
+                    text.push_str(&format!("   fn not_code_{k}() {{ \"still comment\" }}\n"));
+                }
+                text.push_str("   and ends */ let s = \"a string\n");
+                for k in 0..300 {
+                    text.push_str(&format!("   that goes on {k} // not a comment\n"));
+                }
+                text.push_str("   until here\";\n");
+                i += 7303;
+            }
+        }
+        let buf = Buffer::new(&text);
+        let syntax = find("big.rs", "");
+        assert_eq!(syntax.name, "Rust");
+        let mut h = Highlighter::new(syntax);
+        // asking for the last line starts the background parse
+        let last = buf.lines() - 1;
+        h.begin_frame();
+        let _ = h.spans(&buf, last, Duration::from_millis(50));
+        assert!(h.worker.is_some());
+        let started = Instant::now();
+        while h.worker.is_some() && started.elapsed() < Duration::from_secs(300) {
+            std::thread::sleep(Duration::from_millis(20));
+            h.begin_frame();
+        }
+        let blocks = buf.lines().div_ceil(STEP);
+        assert_eq!(h.checkpoints.len(), blocks + 1, "every block has its state");
+        // one pass from the top
+        let (mut st, mut stack) = (ParseState::new(syntax), ScopeStack::new());
+        let mut inside_comment = 0;
+        for b in 0..blocks {
+            assert!(h.checkpoints[b].0 == st && h.checkpoints[b].1 == stack, "state at block {b} of {blocks} differs");
+            if stack.as_slice().iter().any(|s| format!("{s}").starts_with("comment")) {
+                inside_comment += 1;
+            }
+            parse_block(&buf.rope, b, &mut st, &mut stack);
+        }
+        assert!(h.checkpoints[blocks].0 == st && h.checkpoints[blocks].1 == stack);
+        assert!(inside_comment > 1000, "the test text really has long comments ({inside_comment} blocks start inside one)");
+    }
 
     #[test]
     #[ignore = "timing only"]

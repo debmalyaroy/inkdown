@@ -1875,7 +1875,8 @@ pub fn show(ui: &mut Ui, view: &mut EdView, buf: &mut Buffer, hl: &mut Highlight
             }
         }
         ui.ctx().request_repaint_after(Duration::from_millis(280));
-        if let Some(r) = ime_rect {
+        // a document that cannot be typed into does not call up the phone keyboard
+        if let Some(r) = ime_rect.filter(|_| !st.read_only) {
             ui.ctx().output_mut(|o| {
                 o.ime = Some(egui::output::IMEOutput { rect: geo.text, cursor_rect: r, purpose: egui::IMEPurpose::Normal, should_interrupt_composition: false });
             });
