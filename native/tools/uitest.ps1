@@ -828,15 +828,10 @@ if (Want "web") {
                 # give a server from the round before time to notice that it should stop
                 Start-Sleep -Milliseconds 1500
                 & /bin/sh -c "nohup '$py' '$fixtures/range_server.py' '$o/web' '$o/port.txt' $extra > '$o/server-out.txt' 2> '$o/server-err.txt' < /dev/null &"
-                # and try once more if it did not come up
-                $t1 = Get-Date
-                while (-not (Test-Path "$o/port.txt") -and ((Get-Date) - $t1).TotalSeconds -lt 6) { Start-Sleep -Milliseconds 100 }
-                if (-not (Test-Path "$o/port.txt")) {
-                    & /bin/sh -c "nohup '$py' '$fixtures/range_server.py' '$o/web' '$o/port.txt' $extra > '$o/server-out.txt' 2> '$o/server-err.txt' < /dev/null &"
-                }
             }
+            # the first start of Python on a freshly made machine can take a long time
             $t0 = Get-Date
-            while (-not (Test-Path "$o/port.txt") -and ((Get-Date) - $t0).TotalSeconds -lt 15) { Start-Sleep -Milliseconds 100 }
+            while (-not (Test-Path "$o/port.txt") -and ((Get-Date) - $t0).TotalSeconds -lt 60) { Start-Sleep -Milliseconds 100 }
             Start-Sleep -Milliseconds 200
             if (-not (Test-Path "$o/port.txt")) {
                 Check "[$mode] the test web server starts" $false "$py $($srvArgs -join ' ') :: $(Get-Content "$o/server-err.txt" -Raw -ErrorAction SilentlyContinue) :: $(Get-Content "$o/server-out.txt" -Raw -ErrorAction SilentlyContinue)"
