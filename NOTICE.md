@@ -26,7 +26,7 @@ The application is built from open-source Rust crates listed in `native/Cargo.lo
 under its own licence (mostly MIT or Apache-2.0). The main ones: `egui` / `eframe` (user
 interface), `syntect` and `two-face` (syntax definitions), `comrak` (Markdown parsing),
 `resvg` (SVG rendering), `mermaid-rs-renderer`, `layout-rs` (Graphviz layout), `latex-rust`
-(math), `ropey` (text buffer), `hayro` (PDF rendering), `regex` and `fancy-regex` (search),
+(math), `ropey` (text buffer), `hayro` (PDF rendering), `krilla` (PDF writing), `regex` and `fancy-regex` (search),
 `ureq` (web requests on desktop).
 
 The earlier WebView build in the repository root bundles JavaScript libraries in

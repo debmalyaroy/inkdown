@@ -825,7 +825,15 @@ if (Want "web") {
                 # through the shell, detached: the server ends by itself when its port file is removed
                 $srv = $null
                 $extra = if ($mode -eq "plain") { "--no-range" } else { "" }
+                # give a server from the round before time to notice that it should stop
+                Start-Sleep -Milliseconds 1500
                 & /bin/sh -c "nohup '$py' '$fixtures/range_server.py' '$o/web' '$o/port.txt' $extra > '$o/server-out.txt' 2> '$o/server-err.txt' < /dev/null &"
+                # and try once more if it did not come up
+                $t1 = Get-Date
+                while (-not (Test-Path "$o/port.txt") -and ((Get-Date) - $t1).TotalSeconds -lt 6) { Start-Sleep -Milliseconds 100 }
+                if (-not (Test-Path "$o/port.txt")) {
+                    & /bin/sh -c "nohup '$py' '$fixtures/range_server.py' '$o/web' '$o/port.txt' $extra > '$o/server-out.txt' 2> '$o/server-err.txt' < /dev/null &"
+                }
             }
             $t0 = Get-Date
             while (-not (Test-Path "$o/port.txt") -and ((Get-Date) - $t0).TotalSeconds -lt 15) { Start-Sleep -Milliseconds 100 }

@@ -15,15 +15,15 @@ The animation above is also available as a video: [inkdown-demo.mp4](docs/media/
 
 ## Download
 
-**Current release: [v1.2.0](https://github.com/debmalyaroy/inkdown/releases/latest)** ([release notes](docs/releases/v1.2.0.md), [all releases](https://github.com/debmalyaroy/inkdown/releases))
+**Current release: [v1.3.0](https://github.com/debmalyaroy/inkdown/releases/latest)** ([release notes](docs/releases/v1.3.0.md), [all releases](https://github.com/debmalyaroy/inkdown/releases))
 
 | Platform | Download | Status |
 | --- | --- | --- |
 | Windows 10 / 11 (x64) | [Inkdown-Setup.exe](https://github.com/debmalyaroy/inkdown/releases/latest/download/Inkdown-Setup.exe) (installer) | **Stable.** Built, installed and tested on Windows 11 |
 | Windows, no install | [inkdown-windows-x64.exe](https://github.com/debmalyaroy/inkdown/releases/latest/download/inkdown-windows-x64.exe) (portable) | **Stable** |
-| Android 8+ (arm64, x86_64) | [inkdown-android.apk](https://github.com/debmalyaroy/inkdown/releases/latest/download/inkdown-android.apk) | **Beta.** Tested on an Android 15 emulator, not yet on a physical phone |
-| macOS 11+ (Apple silicon and Intel) | [Inkdown-macos-universal.dmg](https://github.com/debmalyaroy/inkdown/releases/latest/download/Inkdown-macos-universal.dmg) | **Preview.** Built and unit-tested by CI; not yet used interactively on a Mac |
-| Linux (x86_64) | [inkdown-linux-x86_64.tar.gz](https://github.com/debmalyaroy/inkdown/releases/latest/download/inkdown-linux-x86_64.tar.gz) | **Preview.** Built and unit-tested by CI |
+| Android 8+ (arm64, x86_64) | [inkdown-android.apk](https://github.com/debmalyaroy/inkdown/releases/latest/download/inkdown-android.apk) | **Beta.** Tested on a Pixel 10 Pro (Android 17) and an Android 15 emulator |
+| macOS 11+ (Apple silicon and Intel) | [Inkdown-macos-universal.dmg](https://github.com/debmalyaroy/inkdown/releases/latest/download/Inkdown-macos-universal.dmg) | **Preview.** Built, unit-tested and put through the scripted UI checks on a Mac by CI; not yet used by a person on a Mac |
+| Linux (x86_64) | [inkdown-linux-x86_64.tar.gz](https://github.com/debmalyaroy/inkdown/releases/latest/download/inkdown-linux-x86_64.tar.gz) | **Preview.** Built and unit-tested by CI; the scripted UI checks run in a container |
 | iOS | not built | Planned; needs a Mac to build (see [packaging/ios](packaging/ios)) |
 
 Checksums for every file are in `SHA256SUMS.txt` on the release page.
@@ -48,6 +48,7 @@ Checksums for every file are in `SHA256SUMS.txt` on the release page.
 
 | Version | Date | What changed | Notes |
 | --- | --- | --- | --- |
+| [1.3.0](https://github.com/debmalyaroy/inkdown/releases/tag/v1.3.0) | 2026-11-15 | PDF export without a browser on every platform, search and selection inside PDF files, protected PDF files, true colours at once in huge files, Android fixes from a real phone, UI checks on Linux and macOS | [notes](docs/releases/v1.3.0.md) |
 | [1.2.0](https://github.com/debmalyaroy/inkdown/releases/tag/v1.2.0) | 2026-11-15 | PDF reader, logs in colour, Follow, documents and live streams from a web address, large files (background loading, word wrap, find and replace), new home page | [notes](docs/releases/v1.2.0.md) |
 | [1.1.0](https://github.com/debmalyaroy/inkdown/releases/tag/v1.1.0) | 2026-11-15 | Unsaved work is never lost (draft files, one window per user), Notes and notebooks, a phone interface, look-around in Find | [notes](docs/releases/v1.1.0.md) |
 | [1.0.3](https://github.com/debmalyaroy/inkdown/releases/tag/v1.0.3) | 2026-11-15 | Android package signed with a permanent key, so updates install over the old version | [notes](docs/releases/v1.0.3.md) |
@@ -103,7 +104,8 @@ Every feature is tracked as a GitHub issue:
 - **From a web address**: open a document or a log by its `http(s)://` address. It is
   refreshed while open, only what changed is fetched where the server allows it, and a
   connection the server keeps open is shown line by line as it arrives.
-- **PDF**: PDF files open as pages with zoom, drawn natively.
+- **PDF**: PDF files open as pages with zoom, drawn natively; their text can be searched,
+  selected and copied, and files protected by a password ask for it.
 - **Large files**: up to 2 GB on desktop. They are read in the background and need about
   1.3 times their size in memory (see the measurements below).
 - **Data**: JSON / YAML / TOML tree view with validation, format, minify and conversion;
@@ -112,8 +114,9 @@ Every feature is tracked as a GitHub issue:
   `null`, `deflate`, `snappy`; logical types such as dates, timestamps and decimals are
   shown readably); `.avsc` schemas are edited as JSON. Records or the schema can be copied
   into a new document.
-- **Export**: HTML, Word (`.docx`), Rich Text, PDF (through an installed Edge or Chrome),
-  copy as rich text, upload to Google Docs with your own OAuth client.
+- **Export**: PDF (written by Inkdown itself, on every platform: real text, bookmarks,
+  links, diagrams and formulas), HTML, Word (`.docx`), Rich Text, copy as rich text,
+  upload to Google Docs with your own OAuth client.
 - **Nothing typed is lost**: every unsaved tab and every unsaved change is kept in a draft
   file and restored on the next start, whether the app was closed, crashed or was killed.
   Opening a file while Inkdown runs adds a tab to the running window.
@@ -183,25 +186,30 @@ Linux needs a few development packages first:
 
 Yes. The interface, text layout, Markdown, diagram and math rendering are all Rust code
 that is compiled unchanged for Windows, macOS, Linux and Android. Platform-specific code is
-limited to: the Windows installer and file associations, where settings are stored, how a
-browser is located for PDF export, the one-window-per-user hand-over on desktop, and the
+limited to: the Windows installer and file associations, where settings are stored,
+the one-window-per-user hand-over on desktop, and the
 Android glue for "Open with", the file pickers and web requests (Android's own HTTP client
 is used there; desktop uses a Rust one). CI builds and runs
 the unit tests on Windows, macOS and Linux for every change.
 
-What "it compiles and the tests pass" does not prove is that everything feels right on a
-platform nobody has used it on. That is why macOS and Linux are labelled *preview* above.
+The scripted UI checks drive the real window on Windows, on Linux (in a container) and on
+macOS (on a Mac in CI). What they do not prove is that everything feels right to a person
+on a platform nobody has used it on. That is why macOS and Linux are labelled *preview*.
 
 ## Tests
 
-- `make test`: 56 unit tests (text buffer, editing commands, Markdown layout, exports, data
+- `make test`: 61 unit tests (text buffer, editing commands, Markdown layout, exports, data
   conversion, log formats, decoding large files in pieces, PDF pages). Run by CI on Windows, macOS and Linux.
-- `pwsh build.ps1 uitest`: 158 end-to-end checks that drive the real window through a
+- `pwsh build.ps1 uitest`: 166 end-to-end checks that drive the real window through a
   scripted input driver in an isolated profile: every mode, multi-cursor editing, the
   designer, drafts after a crash, notes, PDF files, log colours, a large file that grows
   while it is followed, documents and streams from a test web server, exports and
-  performance budgets. Windows only, run locally
-  (GitHub's runners have no GPU for the window).
+  performance budgets. On Windows they are run locally
+  (GitHub's Windows runners have no GPU for the window).
+- `make linux-uitest`: the same checks for the Linux build, in a Docker container with a
+  virtual display and software OpenGL; CI runs them for every change (154 checks), and
+  runs them on a Mac as well (142 checks). Timing and Windows installer checks are left
+  out there.
 - The release workflow installs and uninstalls the Windows installer silently and fails
   the release if either step leaves anything behind.
 
@@ -228,10 +236,9 @@ platform nobody has used it on. That is why macOS and Linux are labelled *previe
 - No plugin API or language-server support yet.
 - Windows installer and macOS app are not code-signed; the Android APK uses a self-generated key, not a Play Store one.
 - A file can be open in only one pane at a time; layouts have one or two columns.
-- PDF export needs Microsoft Edge, Chrome or Chromium installed. PDF files can be read but
-  not searched, and password-protected ones do not open.
-- Files larger than memory allows cannot be opened. On very large files that are not
-  logs, exact syntax colours arrive after a background pass that can take half a minute.
+- PDF export sets text left-aligned in one column and does not split a table row or a
+  picture across pages. Text in a PDF cannot be selected on a phone yet.
+- Files larger than memory allows cannot be opened.
 - Web addresses that need a login are not supported.
 - Write mode shows raw markup for sub/superscript and emoji shortcodes outside the line
   being edited.

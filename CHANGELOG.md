@@ -2,6 +2,18 @@
 
 Each release has full notes in `docs/releases/`.
 
+## [1.3.0] - 2026-11-15
+
+See [docs/releases/v1.3.0.md](docs/releases/v1.3.0.md).
+
+- PDF export is written by Inkdown itself, on every platform, without a browser.
+- PDF files: find, select and copy text; files protected by a password.
+- Huge files: the lines on screen get their true colours in a fraction of a second.
+- Android, from tests on a real phone: high refresh rate, phone layout when held
+  sideways, the magnifier finds, no keyboard over read-only documents.
+- Logs: the first line of a stack trace is coloured with its entry.
+- The scripted UI checks run on Linux (container) and macOS (CI) too.
+
 ## [1.2.0] - 2026-11-15
 
 See [docs/releases/v1.2.0.md](docs/releases/v1.2.0.md).
@@ -74,6 +86,7 @@ First public release. See [docs/releases/v1.0.0.md](docs/releases/v1.0.0.md).
 - Export to HTML, Word, RTF and PDF.
 - Windows installer and portable exe; Android APK; macOS and Linux preview builds.
 
+[1.3.0]: https://github.com/debmalyaroy/inkdown/releases/tag/v1.3.0
 [1.2.0]: https://github.com/debmalyaroy/inkdown/releases/tag/v1.2.0
 [1.1.0]: https://github.com/debmalyaroy/inkdown/releases/tag/v1.1.0
 [1.0.3]: https://github.com/debmalyaroy/inkdown/releases/tag/v1.0.3
