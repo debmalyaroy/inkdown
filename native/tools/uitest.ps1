@@ -818,10 +818,15 @@ if (Want "web") {
             Remove-Item "$o/port.txt", "$o/wb1.json" -ErrorAction SilentlyContinue
             $srvArgs = @((Arg "$fixtures/range_server.py"), (Arg "$o/web"), (Arg "$o/port.txt"))
             if ($mode -eq "plain") { $srvArgs += "--no-range" }
-            $srv = if ($windows) { Start-Process -FilePath $py -ArgumentList $srvArgs -PassThru -WindowStyle Hidden } else { Start-Process -FilePath $py -ArgumentList $srvArgs -PassThru }
+            $srv = if ($windows) { Start-Process -FilePath $py -ArgumentList $srvArgs -PassThru -WindowStyle Hidden } else { Start-Process -FilePath $py -ArgumentList $srvArgs -PassThru -RedirectStandardError "$o/server-err.txt" -RedirectStandardOutput "$o/server-out.txt" }
             $t0 = Get-Date
             while (-not (Test-Path "$o/port.txt") -and ((Get-Date) - $t0).TotalSeconds -lt 15) { Start-Sleep -Milliseconds 100 }
             Start-Sleep -Milliseconds 200
+            if (-not (Test-Path "$o/port.txt")) {
+                Check "[$mode] the test web server starts" $false "$py $($srvArgs -join ' ') :: $(Get-Content "$o/server-err.txt" -Raw -ErrorAction SilentlyContinue)"
+                if (-not $srv.HasExited) { $srv.Kill() }
+                continue
+            }
             $port = (Get-Content "$o/port.txt" -Raw).Trim()
             $u = "http://127.0.0.1:$port"
             Set-Content "$o/web.txt" "cmd open_url $u/app.log`nsleep 2500`nwait 5`ndump $o/wb1.json`nsleep 5000`nwait 5`ndump $o/wb2.json`ntype typed`nwait 3`ncmd open_url $u/README.md`nsleep 2000`nwait 5`ndump $o/wb3.json`ncmd open_url $u/missing.txt`nsleep 2000`nwait 5`ndump $o/wb4.json`ncmd open_url $u/stream.log`nsleep 2600`nwait 5`ndump $o/wb5.json`nsleep 2600`nwait 5`ndump $o/wb6.json`ncmd open_url $u/stream.log?n=3`nsleep 9000`nwait 5`ndump $o/wb7.json`nquit"
