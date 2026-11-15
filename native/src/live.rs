@@ -91,6 +91,8 @@ pub struct Source {
     pub error: Option<String>,
     /// Number of refreshes that brought new text (for tests and the status bar).
     pub updates: u32,
+    /// Looks in a row that failed; the next one waits longer each time.
+    pub fails: u32,
     /// The connection to the server is open and text is shown as it arrives.
     pub streaming: bool,
 }
@@ -405,7 +407,9 @@ pub fn http_open(url: &str, from: u64, etag: Option<&str>, modified: Option<&str
     let mut field = || lines.next().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
     let (etag, modified, range) = (field(), field(), field());
     if status == 0 {
-        return Err(format!("Could not reach {} ({}).", host_of(url), etag.unwrap_or_default()));
+        // the system's own wording is long and changes from try to try; keep it for the log
+        crate::mobile::log(&format!("request to {} failed: {}", host_of(url), etag.unwrap_or_default()));
+        return Err(format!("Could not reach {}. Check the address and the connection.", host_of(url)));
     }
     Ok((Head { status, etag, modified, range_start: range.as_deref().and_then(parse_range_start) }, Box::new(stream)))
 }
@@ -751,11 +755,13 @@ pub fn apply(d: &mut Doc, set: &Settings, update: Update, now: f64) -> Option<St
     match update {
         Update::Unchanged(m) => {
             d.live.error = None;
+            d.live.fails = 0;
             meta_in(d, m);
             None
         }
         Update::Append { text, crlf, consumed, sig, meta } => {
             d.live.error = None;
+            d.live.fails = 0;
             d.buf.append_external(&text);
             d.crlf |= crlf;
             d.live.consumed = consumed;
@@ -770,6 +776,7 @@ pub fn apply(d: &mut Doc, set: &Settings, update: Update, now: f64) -> Option<St
         }
         Update::Replace(text, meta) => {
             d.live.error = None;
+            d.live.fails = 0;
             let t = *text;
             d.encoding = t.encoding;
             d.bom = t.bom;
@@ -822,12 +829,23 @@ pub fn apply(d: &mut Doc, set: &Settings, update: Update, now: f64) -> Option<St
             }
         }
         Update::Failed(e) => {
-            let repeat = d.live.error.as_deref() == Some(e.as_str());
+            // say it once, when it starts going wrong: not at every refresh, and not again
+            // because the wording of the error changed (it can carry a port number)
+            let repeat = d.live.error.is_some();
             d.live.error = Some(e.clone());
-            // say it once, not at every refresh
+            d.live.fails = d.live.fails.saturating_add(1);
             (!repeat).then_some(e)
         }
     }
+}
+
+/// How long to wait before looking at a document's source again: longer after each
+/// failure in a row, up to two minutes, so that an address that is gone is not hammered.
+fn pause(d: &Doc, every: f64) -> f64 {
+    if !d.live.remote() {
+        return 1.0;
+    }
+    (every * f64::from(1u32 << d.live.fails.min(6))).min(120.0).max(every)
 }
 
 /// Once per frame: collects finished work and starts the next look where one is due.
@@ -868,7 +886,7 @@ pub fn tick(app: &mut InkApp, ctx: &egui::Context, now: f64) {
                 d.live.job = None;
                 d.live.loading = false;
                 d.live.streaming = false;
-                d.live.next_check = now + if d.live.remote() { every } else { 1.0 };
+                d.live.next_check = now + pause(d, every);
             } else {
                 if d.live.loading {
                     // keep the progress display moving
@@ -883,7 +901,7 @@ pub fn tick(app: &mut InkApp, ctx: &egui::Context, now: f64) {
         }
         if now >= d.live.next_check {
             let due = if d.live.remote() { true } else { d.changed_on_disk() || d.path.as_ref().and_then(|p| std::fs::metadata(p).ok()).is_some_and(|m| m.len() != d.live.consumed && d.live.consumed > 0) };
-            d.live.next_check = now + if d.live.remote() { every } else { 1.0 };
+            d.live.next_check = now + pause(d, every);
             if due {
                 let c = ctx.clone();
                 start(d, move || c.request_repaint());
@@ -1004,6 +1022,26 @@ mod tests {
         assert!(matches!(refresh_file(&p, t.consumed, &t.sig, true, &progress), Update::Replace(..)));
         let _ = std::fs::remove_file(&p);
         assert!(matches!(refresh_file(&p, 0, &[], true, &progress), Update::Failed(_)));
+    }
+
+    #[test]
+    fn a_source_that_is_gone_is_reported_once_and_asked_less_often() {
+        let set = Settings::default();
+        let mut d = Doc::new(None, "stream.log".into(), "", &set);
+        d.live.url = Some("http://127.0.0.1:9/stream.log".into());
+        // the same failure in different words (a port number that changes) is said once
+        assert!(apply(&mut d, &set, Update::Failed("failed to connect from port 41234".into()), 1.0).is_some());
+        assert!(apply(&mut d, &set, Update::Failed("failed to connect from port 41240".into()), 2.0).is_none());
+        assert!(apply(&mut d, &set, Update::Failed("another wording".into()), 3.0).is_none());
+        assert_eq!(d.live.fails, 3);
+        // each failure in a row doubles the wait, up to two minutes
+        assert_eq!(pause(&d, 3.0), 24.0);
+        d.live.fails = 30;
+        assert_eq!(pause(&d, 3.0), 120.0);
+        // when it works again the count starts over, and a later failure is reported again
+        assert!(apply(&mut d, &set, Update::Unchanged(Meta::default()), 4.0).is_none());
+        assert_eq!((d.live.fails, d.live.error.is_none(), pause(&d, 3.0)), (0, true, 3.0));
+        assert!(apply(&mut d, &set, Update::Failed("gone again".into()), 5.0).is_some());
     }
 
     #[test]

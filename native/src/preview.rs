@@ -21,8 +21,75 @@ pub struct ViewState {
     pub table: TableView,
     pub canvas: Canvas,
     pub pdf: crate::pdfview::PdfView,
+    /// How much larger than normal the reader shows this document (0 means: not changed).
+    pub zoom: f32,
+    /// The zoom a pinch has reached; `zoom` follows it in small steps.
+    zoom_raw: f32,
+    /// When the zoom last changed, for the indicator.
+    zoom_shown: f64,
     pub rich: Option<Box<crate::rich::Rich>>,
     pub design: Option<Box<crate::designer::Designer>>,
+}
+
+/// The least and most a reader can be zoomed.
+pub const ZOOM_RANGE: (f32, f32) = (0.5, 4.0);
+
+impl ViewState {
+    /// The reader's zoom: 1 is the normal size.
+    pub fn zoom(&self) -> f32 {
+        if self.zoom > 0.0 { self.zoom } else { 1.0 }
+    }
+
+    /// Sets the zoom and returns by how much it changed. It moves in steps of 5 %, so that
+    /// a pinch does not lay the document out again at every frame.
+    pub fn set_zoom(&mut self, to: f32, now: f64) -> f32 {
+        let before = self.zoom();
+        self.zoom_raw = to.clamp(ZOOM_RANGE.0, ZOOM_RANGE.1);
+        let stepped = (self.zoom_raw * 20.0).round() / 20.0;
+        self.zoom = if (stepped - 1.0).abs() < 0.001 { 0.0 } else { stepped };
+        if (self.zoom() - before).abs() > 0.0001 {
+            self.zoom_shown = now;
+            // the text keeps its place: what was at the top stays near the top
+            self.md.goto_y = Some(self.md.scroll * self.zoom() / before);
+        }
+        self.zoom() / before
+    }
+
+    /// Pinch, Ctrl and the wheel, and a double tap, for the views that are laid out as text
+    /// (Markdown, data trees, tables). Pictures and PDF pages zoom by themselves.
+    pub fn zoom_gestures(&mut self, ui: &Ui, pane: egui::Rect, touch: bool) {
+        let now = ui.input(|i| i.time);
+        let (delta, double, pos) = ui.input(|i| (i.zoom_delta(), i.pointer.button_double_clicked(egui::PointerButton::Primary), i.pointer.interact_pos().or(i.pointer.hover_pos())));
+        let inside = pos.is_some_and(|p| pane.contains(p));
+        if delta != 1.0 && (inside || touch) {
+            let raw = if self.zoom_raw > 0.0 { self.zoom_raw } else { self.zoom() };
+            self.set_zoom(raw * delta, now);
+        } else if touch && double && inside {
+            // a double tap: larger, and back
+            let to = if self.zoom() > 1.05 { 1.0 } else { 1.5 };
+            self.set_zoom(to, now);
+        }
+    }
+
+    /// Shows the zoom for a moment after it changed; a tap on it goes back to 100 %.
+    pub fn zoom_indicator(&mut self, ui: &mut Ui, pane: egui::Rect, pal: &Palette) {
+        let now = ui.input(|i| i.time);
+        let fresh = now - self.zoom_shown < 1.6 && self.zoom_shown > 0.0;
+        if !fresh && (self.zoom() - 1.0).abs() < 0.001 {
+            return;
+        }
+        let label = format!("{:.0}%", self.zoom() * 100.0);
+        let rect = egui::Rect::from_min_size(egui::pos2(pane.right() - 78.0, pane.bottom() - 44.0), egui::vec2(60.0, 28.0));
+        let resp = ui.interact(rect, Id::new("read-zoom").with(pane.min.x as i32), Sense::click()).on_hover_text("Zoom. Click for 100 %.");
+        ui.painter().rect(rect, egui::CornerRadius::same(14), pal.elev, egui::Stroke::new(1.0, pal.border), egui::StrokeKind::Inside);
+        ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, label, egui::FontId::proportional(12.5), pal.text);
+        if resp.clicked() {
+            self.set_zoom(1.0, now);
+        }
+        if fresh {
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(400));
+        }
+    }
 }
 
 pub enum Action {

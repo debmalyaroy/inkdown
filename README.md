@@ -15,7 +15,7 @@ The animation above is also available as a video: [inkdown-demo.mp4](docs/media/
 
 ## Download
 
-**Current release: [v1.3.0](https://github.com/debmalyaroy/inkdown/releases/latest)** ([release notes](docs/releases/v1.3.0.md), [all releases](https://github.com/debmalyaroy/inkdown/releases))
+**Current release: [v1.3.2](https://github.com/debmalyaroy/inkdown/releases/latest)** ([release notes](docs/releases/v1.3.2.md), [all releases](https://github.com/debmalyaroy/inkdown/releases))
 
 | Platform | Download | Status |
 | --- | --- | --- |
@@ -48,6 +48,7 @@ Checksums for every file are in `SHA256SUMS.txt` on the release page.
 
 | Version | Date | What changed | Notes |
 | --- | --- | --- | --- |
+| [1.3.2](https://github.com/debmalyaroy/inkdown/releases/tag/v1.3.2) | 2026-11-15 | Zoom in every Read view by pinch, Ctrl and the wheel, double tap and keyboard; a web address that cannot be reached is reported once | [notes](docs/releases/v1.3.2.md) |
 | [1.3.0](https://github.com/debmalyaroy/inkdown/releases/tag/v1.3.0) | 2026-11-15 | PDF export without a browser on every platform, search and selection inside PDF files, protected PDF files, true colours at once in huge files, Android fixes from a real phone, UI checks on Linux and macOS | [notes](docs/releases/v1.3.0.md) |
 | [1.2.0](https://github.com/debmalyaroy/inkdown/releases/tag/v1.2.0) | 2026-11-15 | PDF reader, logs in colour, Follow, documents and live streams from a web address, large files (background loading, word wrap, find and replace), new home page | [notes](docs/releases/v1.2.0.md) |
 | [1.1.0](https://github.com/debmalyaroy/inkdown/releases/tag/v1.1.0) | 2026-11-15 | Unsaved work is never lost (draft files, one window per user), Notes and notebooks, a phone interface, look-around in Find | [notes](docs/releases/v1.1.0.md) |
@@ -104,6 +105,8 @@ Every feature is tracked as a GitHub issue:
 - **From a web address**: open a document or a log by its `http(s)://` address. It is
   refreshed while open, only what changed is fetched where the server allows it, and a
   connection the server keeps open is shown line by line as it arrives.
+- **Zoom while reading**: pinch, Ctrl and the mouse wheel, double tap, or Ctrl+= / Ctrl+- /
+  Ctrl+0 in every Read view; text is laid out again at the new size.
 - **PDF**: PDF files open as pages with zoom, drawn natively; their text can be searched,
   selected and copied, and files protected by a password ask for it.
 - **Large files**: up to 2 GB on desktop. They are read in the background and need about
@@ -198,9 +201,9 @@ on a platform nobody has used it on. That is why macOS and Linux are labelled *p
 
 ## Tests
 
-- `make test`: 61 unit tests (text buffer, editing commands, Markdown layout, exports, data
+- `make test`: 62 unit tests (text buffer, editing commands, Markdown layout, exports, data
   conversion, log formats, decoding large files in pieces, PDF pages). Run by CI on Windows, macOS and Linux.
-- `pwsh build.ps1 uitest`: 166 end-to-end checks that drive the real window through a
+- `pwsh build.ps1 uitest`: 174 end-to-end checks that drive the real window through a
   scripted input driver in an isolated profile: every mode, multi-cursor editing, the
   designer, drafts after a crash, notes, PDF files, log colours, a large file that grows
   while it is followed, documents and streams from a test web server, exports and

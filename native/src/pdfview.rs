@@ -62,6 +62,17 @@ pub struct PdfView {
     selection: Option<(usize, usize, usize)>,
     /// Where the first page was drawn last, and at what scale (for tests).
     pub first_page: Option<(f32, f32, f32)>,
+    /// After a zoom by double tap: keep this point of a page (in page points) at this
+    /// place of the view (in screen points from its top left corner).
+    zoom_at: Option<(usize, egui::Pos2, Vec2)>,
+}
+
+/// Scroll offsets that put the point `at` of page `page` at `on_screen` in the view.
+fn offsets_for(sizes: &[Vec2], scale: f32, content_w: f32, page: usize, at: egui::Pos2, on_screen: Vec2) -> Vec2 {
+    let above: f32 = sizes.iter().take(page).map(|s| s.y * scale + GAP).sum::<f32>() + GAP;
+    let page_w = sizes.get(page).map(|s| s.x).unwrap_or(0.0) * scale;
+    let left = (content_w - page_w) / 2.0;
+    vec2((left + at.x * scale - on_screen.x).max(0.0), (above + at.y * scale - on_screen.y).max(0.0))
 }
 
 impl PdfView {
@@ -90,6 +101,13 @@ impl PdfView {
 
     pub fn go_to(&mut self, page: usize) {
         self.go_to = Some((page.min(self.page_count().saturating_sub(1)), 0.0));
+    }
+
+    /// A double tap: zoom in around the tapped point, or back out to the full width.
+    fn toggle_zoom(&mut self, fitted: f32, page: usize, at: egui::Pos2, on_screen: Vec2) {
+        let zoomed = self.zoom > 0.0 && self.zoom > fitted * 1.05;
+        self.zoom = if zoomed { 0.0 } else { (fitted * 2.2).clamp(0.2, 6.0) };
+        self.zoom_at = Some((page, at, on_screen));
     }
 
     pub fn zoom_by(&mut self, factor: f32, fitted: f32) {
@@ -451,6 +469,11 @@ pub fn show(ui: &mut Ui, view: &mut PdfView, id: Id, bytes: &Arc<[u8]>, cx: &mut
         let y: f32 = sizes.iter().take(p).map(|s| s.y * scale + GAP).sum::<f32>() + within * scale;
         area = area.vertical_scroll_offset(y);
     }
+    if let Some((page, at, on_screen)) = view.zoom_at.take() {
+        let to = offsets_for(&sizes, scale, content_w, page, at, on_screen);
+        area = area.vertical_scroll_offset(to.y).horizontal_scroll_offset(to.x);
+    }
+    let mut double_tap: Option<(usize, egui::Pos2, Vec2)> = None;
     let mut middle_page = None;
     let mut copy_now = ui.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Copy))) && view.selection.is_some();
     area.show(ui, |ui| {
@@ -509,6 +532,15 @@ pub fn show(ui: &mut Ui, view: &mut PdfView, id: Id, bytes: &Arc<[u8]>, cx: &mut
                     }
                 }
             }
+            // a double tap zooms in around the tapped point, and out again
+            if touch {
+                let tap = ui.interact(rect, id.with(("page-tap", ix)), Sense::click());
+                if tap.double_clicked() {
+                    if let Some(p) = tap.interact_pointer_pos() {
+                        double_tap = Some((ix, pos2((p.x - rect.left()) / scale, (p.y - rect.top()) / scale), p - full.min));
+                    }
+                }
+            }
             // selecting text with the mouse
             if !touch {
                 let resp = ui.interact(rect, id.with(("page", ix)), Sense::click_and_drag());
@@ -531,8 +563,13 @@ pub fn show(ui: &mut Ui, view: &mut PdfView, id: Id, bytes: &Arc<[u8]>, cx: &mut
                     view.selection = None;
                 }
                 if resp.double_clicked() {
-                    // the word under the pointer
-                    if let Some(c) = resp.interact_pointer_pos().and_then(|p| char_at(&text, to_page(p))) {
+                    // on a word: select it; anywhere else on the page: zoom, as a double tap does
+                    let at = resp.interact_pointer_pos().map(to_page);
+                    let on_text = at.and_then(|p| char_at(&text, p).filter(|c| text.boxes[*c].expand(2.0).contains(p)));
+                    if let (None, Some(p), Some(screen)) = (on_text, at, resp.interact_pointer_pos()) {
+                        double_tap = Some((ix, p, screen - full.min));
+                    }
+                    if let Some(c) = on_text {
                         let chars: Vec<char> = text.text.chars().collect();
                         let word = |ch: char| ch.is_alphanumeric() || ch == '_';
                         if chars.get(c).copied().is_some_and(word) {
@@ -570,6 +607,10 @@ pub fn show(ui: &mut Ui, view: &mut PdfView, id: Id, bytes: &Arc<[u8]>, cx: &mut
             }
         }
     });
+    if let Some((page, at, on_screen)) = double_tap {
+        view.toggle_zoom(fitted, page, at, on_screen);
+        ui.ctx().request_repaint();
+    }
     if copy_now {
         if let Some(t) = view.selected_text() {
             ui.ctx().copy_text(t);
@@ -772,5 +813,21 @@ mod tests {
         v.selection = Some((1, 12, 7));
         assert_eq!(v.selected_text().as_deref(), Some("Second"));
         assert_eq!(v.all_text(), "Page 1\nSecond line of text here\n\nPage 2\nSecond line of text here");
+
+        // a double tap zooms in around the tapped point and a second one goes back
+        let sizes = vec![vec2(612.0, 792.0); 2];
+        let fitted = 0.5;
+        v.zoom = 0.0;
+        v.toggle_zoom(fitted, 1, pos2(306.0, 100.0), vec2(160.0, 300.0));
+        assert!((v.zoom - 1.1).abs() < 1e-4 && v.zoom_at.is_some());
+        // the tapped point of the second page lands where the finger was
+        let content_w = 612.0 * v.zoom + 12.0;
+        let to = offsets_for(&sizes, v.zoom, content_w, 1, pos2(306.0, 100.0), vec2(160.0, 300.0));
+        assert!((to.x - (6.0 + 306.0 * 1.1 - 160.0)).abs() < 0.01, "{to:?}");
+        assert!((to.y - (GAP + 792.0 * 1.1 + GAP + 100.0 * 1.1 - 300.0)).abs() < 0.01, "{to:?}");
+        v.toggle_zoom(fitted, 1, pos2(306.0, 100.0), vec2(160.0, 300.0));
+        assert_eq!(v.zoom, 0.0, "back to the full width");
+        // near the top left corner the view cannot scroll past its start
+        assert_eq!(offsets_for(&sizes, 1.0, 700.0, 0, pos2(0.0, 0.0), vec2(200.0, 200.0)), vec2(0.0, 0.0));
     }
 }

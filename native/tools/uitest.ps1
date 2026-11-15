@@ -651,6 +651,12 @@ quit
             if (Run "pdf-select" "wait 10`nopen $w/sample.pdf`nwait 30`nsleep 1200`nwait 5`ndrag $x0 $y $x1 $y`nwait 12`ndump $o/pdf8.json`nquit") {
                 Check "dragging over text in a PDF selects it" ((Doc (J "pdf8")).pdf_selection -eq "Inkdown sample, page 1") "$((Doc (J 'pdf8')).pdf_selection)"
             }
+            # a double click on an empty part of the page zooms in, a second one zooms out again
+            $bx = [int]($f[0] + 420 * $f[2]); $by = [int]($f[1] + 262 * $f[2])
+            if (Run "pdf-zoom" "wait 10`nopen $w/sample.pdf`nwait 30`nsleep 1200`nwait 5`ndclick $bx $by`nwait 12`ndump $o/pdf12.json`ndclick $bx $by`nwait 12`ndump $o/pdf13.json`nquit") {
+                $z1 = (Doc (J "pdf12")).pdf_first_page[2]; $z2 = (Doc (J "pdf13")).pdf_first_page[2]
+                Check "a double click on the page zooms in, and a second one back out" ($z1 -gt $f[2] * 1.9 -and [math]::Abs($z2 - $f[2]) -lt 0.02) "scale $($f[2]) -> $z1 -> $z2"
+            }
         } else { Check "dragging over text in a PDF selects it" $false "no page position" }
     }
     $s = @"
@@ -731,6 +737,78 @@ quit
     if (Run "closing3" $s -Keep) {
         Check "the window asks when unsaved work could not be kept" ((J "cl3").dialog_kind -eq "ConfirmQuit") "$((J 'cl3').dialog_kind)"
         Check "Cancel keeps the window and the text" (-not (J "cl4").dialog -and (Doc (J "cl4")).text -eq "saved text`nEDITMORE".Replace("EDIT", "") -and (Get-Content "$o/work/c1.txt" -Raw) -eq "saved text`n") "$((Doc (J 'cl4')).text)"
+    }
+}
+
+# ------------------------------------------------------------------- zoom
+# Every Read view zooms: by pinch or Ctrl and the wheel (the `zoom` verb), and by the keyboard.
+if (Want "zoom") {
+    Write-Host "zoom"
+    $s = @"
+wait 10
+open $w/doc.md
+wait 5
+cmd mode read
+wait 30
+move 640 400
+dump $o/zm0.json
+zoom 1.5
+wait 20
+dump $o/zm1.json
+key ctrl+=
+wait 20
+dump $o/zm2.json
+key ctrl+0
+wait 20
+dump $o/zm3.json
+key ctrl+-
+wait 20
+dump $o/zm4.json
+cmd mode code
+wait 5
+key ctrl+=
+wait 5
+dump $o/zm5.json
+open $w/data.json
+wait 5
+cmd mode read
+wait 20
+move 640 400
+zoom 2
+wait 10
+dump $o/zm6.json
+open $w/t.csv
+wait 5
+cmd mode read
+wait 20
+move 640 400
+zoom 0.5
+wait 10
+dump $o/zm7.json
+open $w/sample.pdf
+wait 30
+sleep 1200
+move 640 400
+dump $o/zm8.json
+zoom 1.5
+wait 10
+dump $o/zm9.json
+key ctrl+0
+wait 10
+dump $o/zm10.json
+quit
+"@
+    Copy-Item "$fixtures/sample.pdf" "$o/work/sample.pdf" -Force
+    if (Run "zoom" $s) {
+        $a = Doc (J "zm0"); $b = Doc (J "zm1")
+        Check "a pinch (or Ctrl and the wheel) zooms the Markdown reader" ($a.read_zoom -eq 1 -and [math]::Abs($b.read_zoom - 1.5) -lt 0.01 -and $b.preview_height -gt $a.preview_height * 1.25) "zoom $($a.read_zoom) -> $($b.read_zoom), height $($a.preview_height) -> $($b.preview_height)"
+        Check "Ctrl+= zooms further while reading, Ctrl+0 goes back to 100 %" ([math]::Abs((Doc (J "zm2")).read_zoom - 1.65) -lt 0.01 -and (Doc (J "zm3")).read_zoom -eq 1 -and [math]::Abs((Doc (J "zm3")).preview_height - $a.preview_height) -lt 2) "$((Doc (J 'zm2')).read_zoom) then $((Doc (J 'zm3')).read_zoom)"
+        Check "Ctrl+- makes the page smaller than normal" ([math]::Abs((Doc (J "zm4")).read_zoom - 0.9) -lt 0.01) "$((Doc (J 'zm4')).read_zoom)"
+        Check "in the editor the same keys still change the editor's text size, not the reader" ((J "zm5").font_size -eq ((J "zm0").font_size + 1) -and [math]::Abs((Doc (J "zm5")).read_zoom - 0.9) -lt 0.01) "font $((J 'zm0').font_size) -> $((J 'zm5').font_size)"
+        Check "data trees zoom" ([math]::Abs((Doc (J "zm6")).read_zoom - 2) -lt 0.01) "$((Doc (J 'zm6')).read_zoom)"
+        Check "tables zoom, down to half size" ([math]::Abs((Doc (J "zm7")).read_zoom - 0.5) -lt 0.01) "$((Doc (J 'zm7')).read_zoom)"
+        $p0 = (Doc (J "zm8")).pdf_first_page[2]; $p1 = (Doc (J "zm9")).pdf_first_page[2]; $p2 = (Doc (J "zm10")).pdf_first_page[2]
+        Check "PDF pages zoom by pinch, and Ctrl+0 fits the width again" ([math]::Abs($p1 - $p0 * 1.5) -lt 0.03 -and [math]::Abs($p2 - $p0) -lt 0.02) "scale $p0 -> $p1 -> $p2"
     }
 }
 

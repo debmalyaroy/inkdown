@@ -2,6 +2,14 @@
 
 Each release has full notes in `docs/releases/`.
 
+## [1.3.2] - 2026-11-15
+
+See [docs/releases/v1.3.2.md](docs/releases/v1.3.2.md).
+
+- Zoom in every Read view: pinch, Ctrl and the wheel, double tap, Ctrl+= / Ctrl+- / Ctrl+0.
+- A web address that cannot be reached is reported once instead of at every refresh,
+  and is asked less often while it stays unreachable.
+
 ## [1.3.0] - 2026-11-15
 
 See [docs/releases/v1.3.0.md](docs/releases/v1.3.0.md).
@@ -86,6 +94,7 @@ First public release. See [docs/releases/v1.0.0.md](docs/releases/v1.0.0.md).
 - Export to HTML, Word, RTF and PDF.
 - Windows installer and portable exe; Android APK; macOS and Linux preview builds.
 
+[1.3.2]: https://github.com/debmalyaroy/inkdown/releases/tag/v1.3.2
 [1.3.0]: https://github.com/debmalyaroy/inkdown/releases/tag/v1.3.0
 [1.2.0]: https://github.com/debmalyaroy/inkdown/releases/tag/v1.2.0
 [1.1.0]: https://github.com/debmalyaroy/inkdown/releases/tag/v1.1.0

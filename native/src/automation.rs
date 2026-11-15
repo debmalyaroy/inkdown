@@ -3,7 +3,7 @@
 //!
 //! Script lines: `wait N`, `open PATH`, `cmd NAME [ARG]`, `type TEXT`, `key COMBO`,
 //! `click X Y`, `dclick X Y`, `rclick X Y`, `drag X1 Y1 X2 Y2`, `move X Y`, `scroll DX DY`,
-//! `shot FILE.png`, `dump FILE.json`, `close_window`, `quit`. `\n` and `\t` in TEXT are expanded.
+//! `zoom FACTOR`, `shot FILE.png`, `dump FILE.json`, `close_window`, `quit`. `\n` and `\t` in TEXT are expanded.
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -134,6 +134,11 @@ impl Automation {
                 self.queue.push(Event::PointerMoved(self.pointer));
             }
             "drag" if nums.len() >= 4 => self.drag = Some((pos2(nums[0], nums[1]), pos2(nums[2], nums[3]), 0)),
+            // a pinch, or Ctrl with the wheel: the factor by which to zoom
+            "zoom" if !nums.is_empty() => {
+                self.queue.push(Event::Zoom(nums[0]));
+                self.wait = 6;
+            }
             "scroll" if nums.len() >= 2 => {
                 self.queue.push(Event::MouseWheel { unit: egui::MouseWheelUnit::Point, delta: egui::vec2(nums[0], nums[1]), phase: egui::TouchPhase::Move, modifiers: Modifiers::NONE, source: egui::MouseWheelSource::Wheel });
                 self.wait = 12;
@@ -204,6 +209,8 @@ pub fn dump(app: &InkApp, ctx: &egui::Context) -> serde_json::Value {
                 "outline": d.view.md.outline.len(),
                 "preview_height": d.view.md.total,
                 "hl_pending": d.hl.pending,
+                "read_zoom": d.view.zoom(),
+                "canvas_zoom": d.view.canvas.zoom,
                 "tree_rows": d.view.tree.count,
                 "live": serde_json::json!({ "url": d.live.url, "follow": d.live.follow, "loading": d.live.loading, "streaming": d.live.streaming, "updates": d.live.updates, "error": d.live.error, "consumed": d.live.consumed }),
                 "pdf_pages": d.view.pdf.page_count(),

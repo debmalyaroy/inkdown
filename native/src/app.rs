@@ -940,6 +940,37 @@ impl InkApp {
                 self.fullscreen = !self.fullscreen;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(self.fullscreen));
             }
+            // while reading, these zoom what is being read; while editing, the editor's text
+            "increase_font_size" | "decrease_font_size" | "reset_font_size" if self.docs.get(self.active).is_some_and(|d| d.mode == Mode::Read) => {
+                let now = ctx.input(|i| i.time);
+                let factor = match name {
+                    "increase_font_size" => 1.1,
+                    "decrease_font_size" => 1.0 / 1.1,
+                    _ => 0.0,
+                };
+                if let Some(d) = self.doc() {
+                    match d.kind {
+                        Kind::Pdf => {
+                            if factor > 0.0 {
+                                d.view.pdf.zoom_by(factor, d.view.pdf.first_page.map(|p| p.2).unwrap_or(1.0));
+                            } else {
+                                d.view.pdf.zoom = 0.0;
+                            }
+                        }
+                        Kind::Mermaid | Kind::Dot | Kind::Svg | Kind::Image => {
+                            if factor > 0.0 {
+                                d.view.canvas.zoom = (d.view.canvas.zoom * factor).clamp(0.05, 8.0);
+                            } else {
+                                d.view.canvas = Default::default();
+                            }
+                        }
+                        _ => {
+                            let to = if factor > 0.0 { d.view.zoom() * factor } else { 1.0 };
+                            d.view.set_zoom(to, now);
+                        }
+                    }
+                }
+            }
             "increase_font_size" => self.set.font_size = (self.set.font_size + 1.0).min(40.0),
             "decrease_font_size" => self.set.font_size = (self.set.font_size - 1.0).max(8.0),
             "reset_font_size" => self.set.font_size = 14.0,
@@ -1434,7 +1465,14 @@ impl InkApp {
         let pal_epoch = self.pal_epoch;
         let Some(d) = self.docs.get_mut(self.active) else { return };
         let id = Id::new(("view", d.id));
-        let mut cx = ViewCtx { pal: &pal, assets: &mut self.assets, font_size: self.set.document_font_size, doc_width: self.set.document_width, base: d.dir(), actions: Vec::new() };
+        // text views are zoomed by laying them out larger; pictures and PDF pages zoom by themselves
+        let text_view = matches!(d.kind, Kind::Markdown | Kind::Asciidoc | Kind::Data(_) | Kind::Table(_));
+        let pane = ui.available_rect_before_wrap();
+        if text_view {
+            d.view.zoom_gestures(ui, pane, crate::platform::touch(ui.ctx()));
+        }
+        let zoom = if text_view { d.view.zoom() } else { 1.0 };
+        let mut cx = ViewCtx { pal: &pal, assets: &mut self.assets, font_size: self.set.document_font_size * zoom, doc_width: self.set.document_width * zoom, base: d.dir(), actions: Vec::new() };
         let version = d.buf.version;
         let buf = &d.buf;
         match d.kind {
@@ -1465,6 +1503,9 @@ impl InkApp {
                 }
             }
             Kind::Code => {}
+        }
+        if text_view {
+            d.view.zoom_indicator(ui, pane, &pal);
         }
         let actions = cx.actions;
         let ctx = ui.ctx().clone();
