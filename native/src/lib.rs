@@ -2,6 +2,9 @@
 //!
 //! One code base for Windows, Linux, macOS, Android and iOS (egui).
 
+// the state dump for the UI checks is one large `json!` call
+#![recursion_limit = "256"]
+
 pub mod adoc;
 pub mod app;
 pub mod drafts;

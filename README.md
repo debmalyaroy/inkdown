@@ -15,7 +15,7 @@ The animation above is also available as a video: [inkdown-demo.mp4](docs/media/
 
 ## Download
 
-**Current release: [v1.3.3](https://github.com/debmalyaroy/inkdown/releases/latest)** ([release notes](docs/releases/v1.3.3.md), [all releases](https://github.com/debmalyaroy/inkdown/releases))
+**Current release: [v1.3.4](https://github.com/debmalyaroy/inkdown/releases/latest)** ([release notes](docs/releases/v1.3.4.md), [all releases](https://github.com/debmalyaroy/inkdown/releases))
 
 | Platform | Download | Status |
 | --- | --- | --- |
@@ -48,6 +48,7 @@ Checksums for every file are in `SHA256SUMS.txt` on the release page.
 
 | Version | Date | What changed | Notes |
 | --- | --- | --- | --- |
+| [1.3.4](https://github.com/debmalyaroy/inkdown/releases/tag/v1.3.4) | 2026-11-16 | Android: share with other apps, system save screen for exports, receive from other apps, long press and a Cut / Copy / Paste bar; a copy of a PDF is no longer an empty file | [notes](docs/releases/v1.3.4.md) |
 | [1.3.3](https://github.com/debmalyaroy/inkdown/releases/tag/v1.3.3) | 2026-11-16 | Android: the Back button and gesture close what is open, leave editing, return to the document before, then leave the app | [notes](docs/releases/v1.3.3.md) |
 | [1.3.2](https://github.com/debmalyaroy/inkdown/releases/tag/v1.3.2) | 2026-11-15 | Zoom in every Read view by pinch, Ctrl and the wheel, double tap and keyboard; a web address that cannot be reached is reported once | [notes](docs/releases/v1.3.2.md) |
 | [1.3.0](https://github.com/debmalyaroy/inkdown/releases/tag/v1.3.0) | 2026-11-15 | PDF export without a browser on every platform, search and selection inside PDF files, protected PDF files, true colours at once in huge files, Android fixes from a real phone, UI checks on Linux and macOS | [notes](docs/releases/v1.3.0.md) |
@@ -202,9 +203,9 @@ on a platform nobody has used it on. That is why macOS and Linux are labelled *p
 
 ## Tests
 
-- `make test`: 62 unit tests (text buffer, editing commands, Markdown layout, exports, data
+- `make test`: 63 unit tests (text buffer, editing commands, Markdown layout, exports, data
   conversion, log formats, decoding large files in pieces, PDF pages). Run by CI on Windows, macOS and Linux.
-- `pwsh build.ps1 uitest`: 181 end-to-end checks that drive the real window through a
+- `pwsh build.ps1 uitest`: 190 end-to-end checks that drive the real window through a
   scripted input driver in an isolated profile: every mode, multi-cursor editing, the
   designer, drafts after a crash, notes, PDF files, log colours, a large file that grows
   while it is followed, documents and streams from a test web server, exports and

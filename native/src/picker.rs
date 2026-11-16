@@ -87,6 +87,10 @@ pub fn available(cmd: &str) -> bool {
     if name == "tool_set_default" {
         return cfg!(windows);
     }
+    // sending a file to another app is something phones do
+    if matches!(name, "share_copy" | "share_pdf") {
+        return cfg!(any(target_os = "android", target_os = "ios")) || std::env::var_os("INKDOWN_PHONE").is_some();
+    }
     if name == "export_downloads" {
         return cfg!(target_os = "android");
     }
@@ -215,6 +219,8 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
     ("cancel_build", "Build: Cancel", icons::SQUARE),
     ("toggle_record_macro", "Macro: Start / Stop Recording", icons::CIRCLE),
     ("run_macro", "Macro: Play Back", icons::PLAY),
+    ("share_copy", "Share: Send a Copy to Another App…", icons::SHARE_2),
+    ("share_pdf", "Share: Send as PDF to Another App…", icons::SHARE_2),
     ("export_downloads", "Export: Save a Copy to Downloads", icons::FILE_DOWN),
     ("export_html", "Export: HTML…", icons::FILE_DOWN),
     ("export_pdf", "Export: PDF…", icons::FILE_DOWN),

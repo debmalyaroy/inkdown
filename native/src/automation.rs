@@ -3,7 +3,7 @@
 //!
 //! Script lines: `wait N`, `open PATH`, `cmd NAME [ARG]`, `type TEXT`, `key COMBO`,
 //! `click X Y`, `dclick X Y`, `rclick X Y`, `drag X1 Y1 X2 Y2`, `move X Y`, `scroll DX DY`,
-//! `zoom FACTOR`, `back`, `shot FILE.png`, `dump FILE.json`, `close_window`, `quit`. `\n` and `\t` in TEXT are expanded.
+//! `zoom FACTOR`, `back`, `hold X Y MS`, `shot FILE.png`, `dump FILE.json`, `close_window`, `quit`. `\n` and `\t` in TEXT are expanded.
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -22,13 +22,14 @@ pub struct Automation {
     drag: Option<(Pos2, Pos2, u32)>,
     pointer: Pos2,
     until: Option<std::time::Instant>,
+    held: Option<Pos2>,
 }
 
 impl Automation {
     pub fn from_env() -> Option<Self> {
         let path = std::env::var_os("INKDOWN_AUTOMATION")?;
         let text = std::fs::read_to_string(path).ok()?;
-        Some(Self { lines: text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).map(String::from).collect(), wait: 3, queue: Vec::new(), shot: None, drag: None, pointer: pos2(0.0, 0.0), until: None })
+        Some(Self { lines: text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).map(String::from).collect(), wait: 3, queue: Vec::new(), shot: None, drag: None, pointer: pos2(0.0, 0.0), until: None, held: None })
     }
 
     pub fn inject(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
@@ -90,6 +91,12 @@ impl Automation {
             self.wait -= 1;
             return;
         }
+        // a held finger is lifted when its time is up
+        if let Some(p) = self.held.take() {
+            self.queue.push(Event::PointerButton { pos: p, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
+            self.wait = 2;
+            return;
+        }
         let Some(line) = self.lines.pop_front() else { return };
         app.last_cmd = format!("script: {line}");
         let (op, rest) = line.split_once(' ').map(|(a, b)| (a, b.trim())).unwrap_or((line.as_str(), ""));
@@ -134,6 +141,15 @@ impl Automation {
                 self.queue.push(Event::PointerMoved(self.pointer));
             }
             "drag" if nums.len() >= 4 => self.drag = Some((pos2(nums[0], nums[1]), pos2(nums[2], nums[3]), 0)),
+            // a finger pressed and held: `hold X Y MILLISECONDS`
+            "hold" if nums.len() >= 2 => {
+                let p = pos2(nums[0], nums[1]);
+                self.pointer = p;
+                self.queue.push(Event::PointerMoved(p));
+                self.queue.push(Event::PointerButton { pos: p, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+                self.held = Some(p);
+                self.until = Some(std::time::Instant::now() + std::time::Duration::from_millis(nums.get(2).copied().unwrap_or(700.0) as u64));
+            }
             // the Back button or gesture of a phone
             "back" => {
                 for pressed in [true, false] {
@@ -244,6 +260,10 @@ pub fn dump(app: &InkApp, ctx: &egui::Context) -> serde_json::Value {
         "bottom": format!("{:?}", app.bottom),
         "split": app.split.is_some(),
         "sheet": app.sheet.map(|s| format!("{s:?}")),
+        "long_presses": app.long_presses,
+        "select_bar": app.select_bar_until > app.now,
+        "handed": app.handed.clone(),
+        "export_items": crate::phone::export_items(app).iter().map(|i| i.2).collect::<Vec<_>>(),
         "backs": app.backs,
         "left_app": app.left_app,
         "minimap": app.set.minimap,

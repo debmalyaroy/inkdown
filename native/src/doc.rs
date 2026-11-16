@@ -371,6 +371,15 @@ impl Doc {
         Ok(d)
     }
 
+    /// The document as a file: what a copy of it must contain. A PDF or a picture is its
+    /// original bytes (it has no text to write); everything else is its text as it is now.
+    pub fn bytes_for_copy(&mut self, set: &Settings) -> Vec<u8> {
+        match &self.bytes {
+            Some(b) => b.to_vec(),
+            None => self.text_for_disk(set).into_bytes(),
+        }
+    }
+
     pub fn dirty(&self) -> bool {
         !self.scratch && !self.read_only && self.buf.dirty()
     }
@@ -516,6 +525,23 @@ fn hex_dump(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A copy of a PDF is the PDF: it used to be written from the document's text, which a
+    /// PDF does not have, and the copy was an empty file that nothing could open.
+    #[test]
+    fn a_copy_of_a_file_without_text_is_the_file_itself() {
+        let set = Settings::default();
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tools").join("fixtures").join("sample.pdf");
+        let original = std::fs::read(&fixture).unwrap();
+        let mut d = Doc::open(&fixture, &set).unwrap();
+        assert_eq!(d.kind, Kind::Pdf);
+        assert_eq!(d.buf.len(), 0, "a PDF has no text in the editor");
+        let copy = d.bytes_for_copy(&set);
+        assert!(copy.starts_with(b"%PDF-") && copy == original);
+        // a text document is its text
+        let mut t = Doc::new(None, "a.txt".into(), "one\ntwo\n", &set);
+        assert_eq!(t.bytes_for_copy(&set), b"one\ntwo\n");
+    }
 
     #[test]
     fn encodings_round_trip() {

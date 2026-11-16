@@ -16,8 +16,10 @@ use crate::theme;
 
 pub enum Done {
     Toast(String),
-    /// A file was written: say so (on phones it is also copied to Downloads).
+    /// A file was written: say so (on phones the user then chooses where it goes).
     Saved(PathBuf, String),
+    /// A file to send to another app: its name and contents.
+    Share(String, Vec<u8>),
     Open(String, String),
     Connected(Result<(), String>),
 }
@@ -205,9 +207,14 @@ pub fn html_page(markdown: &str, stem: &str, base: Option<&Path>, png: bool) -> 
 pub fn exported(app: &mut InkApp, path: &Path, msg: &str) {
     #[cfg(any(target_os = "android", target_os = "ios"))]
     {
+        // the file was made in Inkdown's own folder; where it goes is the user's choice,
+        // in the system's "save to" screen, as in other apps
         let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-        match std::fs::read(path).map_err(|e| e.to_string()).and_then(|b| crate::mobile::save_to_downloads(&name, &b)) {
-            Ok(place) => app.toast(format!("Saved to {place}")),
+        match std::fs::read(path) {
+            Ok(bytes) => {
+                let _ = std::fs::remove_file(path);
+                app.hand_over(&name, bytes, false);
+            }
             Err(_) => app.toast(format!("{msg} in Inkdown's documents")),
         }
     }
@@ -312,12 +319,50 @@ pub fn command(app: &mut InkApp, ctx: &egui::Context, name: &str) {
     // phones: any document, as it is, into the shared Downloads folder
     #[cfg(any(target_os = "android", target_os = "ios"))]
     if name == "export_downloads" {
-        let Some(d) = app.docs.get(app.active) else { return };
-        let (file, text) = (d.name.clone(), d.buf.text());
-        match crate::mobile::save_to_downloads(&file, text.as_bytes()) {
+        let set = app.set.clone();
+        let Some(d) = app.docs.get_mut(app.active) else { return };
+        // the file itself: a PDF or a picture has no text, its bytes are the document
+        let (file, bytes) = (d.name.clone(), d.bytes_for_copy(&set));
+        match crate::mobile::save_to_downloads(&file, &bytes) {
             Ok(place) => app.toast(format!("Saved to {place}")),
             Err(e) => app.toast(e),
         }
+        return;
+    }
+    // to another app, through the share sheet of the phone
+    if name == "share_copy" {
+        let set = app.set.clone();
+        let Some(d) = app.docs.get_mut(app.active) else { return };
+        let (file, bytes) = (d.name.clone(), d.bytes_for_copy(&set));
+        app.hand_over(&file, bytes, true);
+        return;
+    }
+    if name == "share_pdf" {
+        let set = app.set.clone();
+        let Some(d) = app.docs.get_mut(app.active) else { return };
+        if d.kind == Kind::Pdf {
+            let (file, bytes) = (d.name.clone(), d.bytes_for_copy(&set));
+            app.hand_over(&file, bytes, true);
+            return;
+        }
+        if d.kind.viewed_only() {
+            app.toast("This document cannot be made into a PDF.");
+            return;
+        }
+        let stem = d.name.rsplit_once('.').map(|x| x.0.to_string()).unwrap_or_else(|| d.name.clone());
+        let (kind, text, title, base) = (d.kind, d.buf.text(), d.name.clone(), d.dir());
+        app.toast("Creating PDF…");
+        background(app, ctx, move || {
+            let made = match kind {
+                Kind::Markdown => crate::pdfout::markdown_to_pdf(&text, &stem, base.as_deref()),
+                Kind::Asciidoc => crate::pdfout::markdown_to_pdf(&crate::adoc::to_markdown(&text), &stem, base.as_deref()),
+                _ => crate::pdfout::text_to_pdf(&text, &title),
+            };
+            match made {
+                Ok(bytes) => Done::Share(format!("{stem}.pdf"), bytes),
+                Err(e) => Done::Toast(e),
+            }
+        });
         return;
     }
     // diagram documents

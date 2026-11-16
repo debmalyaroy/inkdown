@@ -152,6 +152,49 @@ pub fn bottom_bar(ui: &mut Ui, app: &mut InkApp, inset_bottom: f32) {
         });
     }
 
+    // Text is selected: what can be done with it, in words, the way every phone editor
+    // offers it. (The same actions sit at the end of the strip below, as icons.)
+    let source = matches!(mode, Mode::Write | Mode::Code);
+    let selected = app.docs.get(app.active).is_some_and(|d| !d.buf.primary().is_empty());
+    let asked = app.select_bar_until > ui.input(|i| i.time);
+    if source && (selected || asked) {
+        egui::Panel::bottom("phone-select").exact_size(46.0).frame(egui::Frame::new().fill(pal.elev)).show_separator_line(false).show(ui, |ui| {
+            let r = ui.max_rect();
+            ui.painter().line_segment([r.left_top(), r.right_top()], Stroke::new(1.0, pal.border_soft));
+            let mut items: Vec<(&str, &str)> = Vec::new();
+            if selected && !read_only {
+                items.push(("Cut", "cut"));
+            }
+            if selected {
+                items.push(("Copy", "copy"));
+            }
+            if !read_only {
+                items.push(("Paste", "paste"));
+            }
+            items.push(("Select all", "select_all"));
+            if selected {
+                items.push(("Line", "expand_selection_to_line"));
+            }
+            let w = r.width() / items.len() as f32;
+            for (i, (label, cmd)) in items.iter().enumerate() {
+                let cell = Rect::from_min_size(pos2(r.min.x + i as f32 * w, r.min.y), vec2(w, r.height()));
+                let resp = ui.interact(cell, Id::new(("phone-select", *cmd)), Sense::click());
+                if resp.is_pointer_button_down_on() {
+                    ui.painter().rect_filled(cell.shrink(3.0), CornerRadius::same(8), pal.active());
+                }
+                let g = theme::text(ui, label, 13.5, pal.accent, 600.0);
+                ui.painter().galley(pos2(cell.center().x - g.size().x / 2.0, cell.center().y - g.size().y / 2.0), g, pal.accent);
+                if resp.clicked() {
+                    app.pending.push(cmd.to_string());
+                    // after Cut, Copy or Paste the bar has done its work
+                    if matches!(*cmd, "cut" | "copy" | "paste") {
+                        app.select_bar_until = 0.0;
+                    }
+                }
+            }
+        });
+    }
+
     if editing {
         egui::Panel::bottom("phone-format").exact_size(48.0).frame(egui::Frame::new().fill(pal.chrome2)).show_separator_line(false).show(ui, |ui| {
             let r = ui.max_rect();
@@ -338,17 +381,7 @@ fn rows_height(which: Sheet, app: &InkApp) -> f32 {
     match which {
         Sheet::Menu => 16.0 * ROW + 4.0 * DIVIDER,
         Sheet::Documents => app.docs.len() as f32 * 54.0 + DIVIDER + 2.0 * ROW,
-        Sheet::Export => {
-            let kind = app.docs.get(app.active).map(|d| d.kind);
-            let own = have(&["export_downloads"]);
-            if matches!(kind, Some(Kind::Markdown | Kind::Asciidoc)) {
-                (own + 1.0 + have(&["export_pdf", "export_html", "export_docx", "export_rtf", "export_copy_html", "export_copy_rich", "export_gdoc"])) * ROW
-            } else if matches!(kind, Some(Kind::Mermaid | Kind::Dot | Kind::Svg)) {
-                (own + 2.0) * ROW
-            } else {
-                own.max(1.0) * ROW
-            }
-        }
+        Sheet::Export => export_items(app).len().max(1) as f32 * ROW,
         Sheet::Tools => crate::picker::COMMANDS.iter().filter(|c| c.0.starts_with("tool_") && crate::picker::available(c.0)).count() as f32 * ROW,
         Sheet::Settings => 9.0 * ROW + DIVIDER,
         Sheet::Help => 6.0 * ROW,
@@ -379,23 +412,46 @@ fn menu_rows(ui: &mut Ui, app: &mut InkApp) {
     nav_row(ui, app, icons::INFO, "Help", Sheet::Help);
 }
 
-fn export_rows(ui: &mut Ui, app: &mut InkApp) {
+/// What the "Share and export" sheet offers for the open document, in order.
+pub fn export_items(app: &InkApp) -> Vec<(&'static str, &'static str, &'static str)> {
     let kind = app.docs.get(app.active).map(|d| d.kind);
     let prose = matches!(kind, Some(Kind::Markdown | Kind::Asciidoc));
     let diagram = matches!(kind, Some(Kind::Mermaid | Kind::Dot | Kind::Svg));
-    command_row(ui, app, icons::FILE_DOWN, "Save a copy to Downloads", "export_downloads");
+    let pdf = kind == Some(Kind::Pdf);
+    let text = kind.is_some_and(|k| !k.viewed_only());
+    let mut items: Vec<(&str, &str, &str)> = Vec::new();
+    // to another app
+    items.push((icons::SHARE_2, if pdf { "Share" } else { "Share this file" }, "share_copy"));
+    if text {
+        items.push((icons::SHARE_2, "Share as PDF", "share_pdf"));
+    }
+    // to a place the user picks
+    if text {
+        items.push((icons::FILE_DOWN, "Save as PDF", "export_pdf"));
+    }
     if prose {
-        command_row(ui, app, icons::FILE_DOWN, "PDF", "export_pdf");
-        command_row(ui, app, icons::FILE_DOWN, "Print", "print");
-        command_row(ui, app, icons::GLOBE, "Web page (HTML)", "export_html");
-        command_row(ui, app, icons::FILE_TEXT, "Word document", "export_docx");
-        command_row(ui, app, icons::FILE_TEXT, "Rich text (RTF)", "export_rtf");
-        command_row(ui, app, icons::CODE, "Copy as HTML", "export_copy_html");
-        command_row(ui, app, icons::CLIPBOARD, "Copy as rich text", "export_copy_rich");
-        command_row(ui, app, icons::CLOUD_UPLOAD, "Google Docs", "export_gdoc");
-    } else if diagram {
-        command_row(ui, app, icons::FILE_IMAGE, "Picture (PNG)", "export_png");
-        command_row(ui, app, icons::FILE_IMAGE, "Drawing (SVG)", "export_svg");
+        items.push((icons::FILE_TEXT, "Save as Word document", "export_docx"));
+        items.push((icons::GLOBE, "Save as web page (HTML)", "export_html"));
+        items.push((icons::FILE_TEXT, "Save as rich text (RTF)", "export_rtf"));
+    }
+    if diagram {
+        items.push((icons::FILE_IMAGE, "Save as picture (PNG)", "export_png"));
+        items.push((icons::FILE_IMAGE, "Save as drawing (SVG)", "export_svg"));
+    }
+    items.push((icons::FILE_DOWN, "Save a copy to Downloads", "export_downloads"));
+    if prose {
+        items.push((icons::FILE_DOWN, "Print", "print"));
+        items.push((icons::CODE, "Copy as HTML", "export_copy_html"));
+        items.push((icons::CLIPBOARD, "Copy as rich text", "export_copy_rich"));
+        items.push((icons::CLOUD_UPLOAD, "Google Docs", "export_gdoc"));
+    }
+    items.retain(|i| crate::picker::available(i.2));
+    items
+}
+
+fn export_rows(ui: &mut Ui, app: &mut InkApp) {
+    for (icon, label, cmd) in export_items(app) {
+        command_row(ui, app, icon, label, cmd);
     }
 }
 

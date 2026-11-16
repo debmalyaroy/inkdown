@@ -90,7 +90,10 @@ fn import_uri(uri: &str) -> Option<PathBuf> {
     std::fs::create_dir_all(&dir).ok()?;
     let path = dir.join(if name.is_empty() { "document.md".into() } else { name });
     std::fs::write(&path, bytes).ok()?;
-    ORIGINS.lock().unwrap().get_or_insert_with(HashMap::new).insert(canonical(&path), uri.to_string());
+    // text shared into Inkdown arrives through our own provider and has no original to write back to
+    if !uri.starts_with("content://app.inkdown.editor.share/") {
+        ORIGINS.lock().unwrap().get_or_insert_with(HashMap::new).insert(canonical(&path), uri.to_string());
+    }
     Some(path)
 }
 
@@ -176,6 +179,45 @@ pub fn save_to(place: &str, path: &Path, bytes: &[u8]) -> Result<String, String>
     {
         let _ = (place, path, bytes);
         Err("Not available on this device.".into())
+    }
+}
+
+/// Writes `bytes` to the document the user created with [`pick_save`]. Returns its name.
+pub fn write_to(place: &str, bytes: &[u8]) -> Result<String, String> {
+    #[cfg(target_os = "android")]
+    {
+        if !android::write_uri(place, bytes) {
+            return Err("Could not write to the chosen location.".into());
+        }
+        Ok(android::display_name(place).unwrap_or_else(|| "the chosen location".into()))
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (place, bytes);
+        Err("Not available on this device.".into())
+    }
+}
+
+/// Offers a file to other apps through the system's share sheet.
+pub fn share_file(name: &str, bytes: &[u8]) -> Result<(), String> {
+    // the file has to exist while the other app reads it: it is kept in a folder of its
+    // own, which holds only the files shared last
+    let dir = crate::settings::config_dir().join("share");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Could not prepare the file: {e}"))?;
+    let path = dir.join(name);
+    std::fs::write(&path, bytes).map_err(|e| format!("Could not prepare the file: {e}"))?;
+    #[cfg(target_os = "android")]
+    {
+        if android::share_file(&path.to_string_lossy(), name, mime_of(name)) {
+            Ok(())
+        } else {
+            Err("Sharing is not available on this device.".into())
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        Err("Sharing is not available on this device.".into())
     }
 }
 
@@ -374,6 +416,17 @@ mod android {
             Ok(Some(s))
         })
         .flatten()
+    }
+
+    pub fn share_file(path: &str, name: &str, mime: &str) -> bool {
+        with_env(|env, act| {
+            let p = env.new_string(path)?;
+            let n = env.new_string(name)?;
+            let m = env.new_string(mime)?;
+            env.call_method(act, "shareFile", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V", &[JValue::Object(&p), JValue::Object(&n), JValue::Object(&m)])?;
+            Ok(())
+        })
+        .is_some()
     }
 
     pub fn pick_save(name: &str, mime: &str) -> bool {

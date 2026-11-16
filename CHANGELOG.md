@@ -2,6 +2,15 @@
 
 Each release has full notes in `docs/releases/`.
 
+## [1.3.4] - 2026-11-16
+
+See [docs/releases/v1.3.4.md](docs/releases/v1.3.4.md).
+
+- Fixed: "Save a copy to Downloads" of a PDF or a picture wrote an empty file.
+- Android: Share and Share as PDF through the system's share sheet; exports through the
+  system's Save screen; Inkdown receives files and text shared by other apps.
+- Android: a long press selects a word; a bar with Cut, Copy, Paste, Select all and Line.
+
 ## [1.3.3] - 2026-11-16
 
 See [docs/releases/v1.3.3.md](docs/releases/v1.3.3.md).
@@ -101,6 +110,7 @@ First public release. See [docs/releases/v1.0.0.md](docs/releases/v1.0.0.md).
 - Export to HTML, Word, RTF and PDF.
 - Windows installer and portable exe; Android APK; macOS and Linux preview builds.
 
+[1.3.4]: https://github.com/debmalyaroy/inkdown/releases/tag/v1.3.4
 [1.3.3]: https://github.com/debmalyaroy/inkdown/releases/tag/v1.3.3
 [1.3.2]: https://github.com/debmalyaroy/inkdown/releases/tag/v1.3.2
 [1.3.0]: https://github.com/debmalyaroy/inkdown/releases/tag/v1.3.0

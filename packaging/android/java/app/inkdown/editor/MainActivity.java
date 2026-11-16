@@ -35,6 +35,52 @@ public class MainActivity extends NativeActivity {
     protected void onCreate(android.os.Bundle state) {
         super.onCreate(state);
         useFastestRefreshRate();
+        received(getIntent());
+    }
+
+    /**
+     * Something another app shared with Inkdown ("Share" and then Inkdown): a file is
+     * opened like any other, and text becomes a new note.
+     */
+    private void received(Intent intent) {
+        if (intent == null || !Intent.ACTION_SEND.equals(intent.getAction())) {
+            return;
+        }
+        Uri stream = intent.getParcelableExtra(Intent.EXTRA_STREAM);
+        if (stream != null) {
+            synchronized (lock) {
+                opened.add(stream.toString());
+            }
+            return;
+        }
+        CharSequence text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT);
+        if (text == null || text.length() == 0) {
+            return;
+        }
+        try {
+            String subject = intent.getStringExtra(Intent.EXTRA_SUBJECT);
+            String name = subject == null ? "" : subject.replaceAll("[^\\p{L}\\p{N} ._-]", " ").trim();
+            if (name.length() > 60) {
+                name = name.substring(0, 60).trim();
+            }
+            if (name.length() == 0) {
+                name = "Shared text";
+            }
+            java.io.File dir = new java.io.File(getFilesDir(), "shared-in");
+            dir.mkdirs();
+            java.io.File file = new java.io.File(dir, name + ".md");
+            java.io.FileOutputStream out = new java.io.FileOutputStream(file);
+            String body = (subject != null && subject.trim().length() > 0 ? "# " + subject.trim() + "\n\n" : "") + text + "\n";
+            out.write(body.getBytes("UTF-8"));
+            out.close();
+            // read back by the native side through the same door as any other document
+            Uri uri = ShareProvider.offer(file, file.getName());
+            synchronized (lock) {
+                opened.add(uri.toString());
+            }
+        } catch (Exception e) {
+            // the note could not be written: nothing arrives
+        }
     }
 
     @Override
@@ -80,6 +126,7 @@ public class MainActivity extends NativeActivity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        received(intent);
         Uri uri = intent.getData();
         if (uri != null) {
             synchronized (lock) {
@@ -117,6 +164,34 @@ public class MainActivity extends NativeActivity {
                     startActivityForResult(intent, REQUEST_OPEN);
                 } catch (Exception e) {
                     // no document provider on this device: nothing to pick from
+                }
+            }
+        });
+    }
+
+    /**
+     * Offers a file to other apps: the system's share sheet opens, and the app the user
+     * picks is allowed to read this one file (see ShareProvider).
+     */
+    public void shareFile(final String path, final String name, final String mime) {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    Uri uri = ShareProvider.offer(new java.io.File(path), name);
+                    Intent send = new Intent(Intent.ACTION_SEND);
+                    send.setType(mime);
+                    send.putExtra(Intent.EXTRA_STREAM, uri);
+                    send.putExtra(Intent.EXTRA_SUBJECT, name);
+                    send.putExtra(Intent.EXTRA_TITLE, name);
+                    // the chooser passes the permission on through the clip data
+                    send.setClipData(ClipData.newRawUri(name, uri));
+                    send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    Intent chooser = Intent.createChooser(send, name);
+                    chooser.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    startActivity(chooser);
+                } catch (Exception e) {
+                    // no app on this device can receive the file
                 }
             }
         });

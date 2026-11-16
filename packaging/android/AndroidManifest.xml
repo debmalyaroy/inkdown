@@ -47,6 +47,23 @@
                 <data android:scheme="content" android:mimeType="application/octet-stream" />
                 <data android:scheme="content" android:mimeType="application/pdf" />
             </intent-filter>
+
+            <!-- "Share" from another app, then Inkdown: text becomes a note, a file is opened -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/*" />
+                <data android:mimeType="application/pdf" />
+                <data android:mimeType="application/json" />
+            </intent-filter>
         </activity>
+
+        <!-- Files the user shares with another app are read through this, one file at a
+             time and only by the app that was given permission for it. -->
+        <provider
+            android:name=".ShareProvider"
+            android:authorities="app.inkdown.editor.share"
+            android:exported="false"
+            android:grantUriPermissions="true" />
     </application>
 </manifest>

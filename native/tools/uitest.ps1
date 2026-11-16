@@ -808,6 +808,98 @@ quit
     } else { Check "the Back run produced its dumps" $false "missing" }
 }
 
+# ------------------------------------------------------------------ share
+# Handing files to the system of a phone: the share sheet and the "save to" screen.
+if (Want "share") {
+    Write-Host "share"
+    $env:INKDOWN_PHONE = "1"
+    Copy-Item "$fixtures/sample.pdf" "$o/work/sample.pdf" -Force
+    $pdfSize = (Get-Item "$o/work/sample.pdf").Length
+    $s = @"
+wait 20
+open $w/doc.md
+wait 10
+cmd share_copy
+wait 5
+cmd share_pdf
+sleep 4000
+wait 5
+open $w/a.rs
+wait 8
+cmd share_pdf
+sleep 3000
+wait 5
+open $w/sample.pdf
+wait 20
+cmd share_copy
+wait 5
+cmd share_pdf
+wait 5
+dump $o/sh1.json
+open $w/doc.md
+wait 8
+dump $o/sh2.json
+quit
+"@
+    Remove-Item -Recurse -Force "$o/profile" -ErrorAction SilentlyContinue
+    Set-Content "$o/share.txt" $s
+    $env:INKDOWN_DATA_DIR = "$o/profile"; $env:INKDOWN_AUTOMATION = "$o/share.txt"; $env:INKDOWN_WINDOW = "412x880"; $env:INKDOWN_DIALOG_DIR = "$o/export"
+    $p = Start-Process -FilePath $exe -PassThru
+    if (-not $p.WaitForExit(120000)) { $p.Kill() }
+    Remove-Item Env:INKDOWN_PHONE
+    $env:INKDOWN_WINDOW = "1280x840"
+    if (Test-Path "$o/sh1.json") {
+        $h = (J "sh1").handed
+        Check "Share sends the document as it is" ($h[0] -like "share doc.md * text") "$($h[0])"
+        Check "Share as PDF makes a PDF of a Markdown document" ($h[1] -like "share doc.pdf * pdf" -and [int]($h[1] -split ' ')[2] -gt 3000) "$($h[1])"
+        Check "Share as PDF works for source code too" ($h[2] -like "share a.pdf * pdf") "$($h[2])"
+        Check "sharing a PDF sends the PDF itself, every byte of it" ($h[3] -eq "share sample.pdf $pdfSize pdf" -and $h[4] -eq "share sample.pdf $pdfSize pdf") "$($h[3]) | $($h[4])"
+        $forPdf = (J "sh1").export_items -join ","; $forMd = (J "sh2").export_items -join ","
+        Check "the export sheet offers a PDF what applies to it: Share, and nothing that needs text" ($forPdf -like "share_copy*" -and $forPdf -notlike "*export_docx*" -and $forPdf -notlike "*share_pdf*") $forPdf
+        Check "and a Markdown document: Share, Share as PDF, Save as PDF, Word, HTML, Print" ($forMd -like "share_copy,share_pdf,export_pdf,export_docx,export_html*" -and $forMd -like "*print*") $forMd
+    } else { Check "the share run produced its dump" $false "missing" }
+}
+
+# ------------------------------------------------------------------ touch
+# Selecting text with a finger, in the phone layout: long press, and the bar with Cut, Copy,
+# Paste and Select all.
+if (Want "touch") {
+    Write-Host "touch"
+    $env:INKDOWN_PHONE = "1"
+    Set-Content "$o/work/touch.txt" "alpha bravo charlie`ndelta echo foxtrot`n" -NoNewline
+    $s = @"
+wait 20
+open $w/touch.txt
+wait 10
+dump $o/tc0.json
+hold 110 64 800
+wait 8
+dump $o/tc1.json
+shot $o/tc1.png
+click 60 600
+wait 4
+dump $o/tc2.json
+cmd select_all
+wait 4
+dump $o/tc3.json
+quit
+"@
+    Remove-Item -Recurse -Force "$o/profile" -ErrorAction SilentlyContinue
+    Set-Content "$o/touch-run.txt" $s
+    $env:INKDOWN_DATA_DIR = "$o/profile"; $env:INKDOWN_AUTOMATION = "$o/touch-run.txt"; $env:INKDOWN_WINDOW = "412x880"
+    $p = Start-Process -FilePath $exe -PassThru
+    if (-not $p.WaitForExit(120000)) { $p.Kill() }
+    Remove-Item Env:INKDOWN_PHONE
+    $env:INKDOWN_WINDOW = "1280x840"
+    if (Test-Path "$o/tc3.json") {
+        $a = Doc (J "tc0"); $b = Doc (J "tc1")
+        $picked = if ($b.sels[0][0] -ne $b.sels[0][1]) { $b.text.Substring([math]::Min($b.sels[0][0], $b.sels[0][1]), [math]::Abs($b.sels[0][1] - $b.sels[0][0])) } else { "" }
+        Check "a long press selects the word under the finger" ((J "tc1").long_presses -eq 1 -and $picked -in @("alpha", "bravo", "charlie")) "selected '$picked' ($($b.sels[0] -join '-')), long presses $((J 'tc1').long_presses)"
+        Check "and brings up the bar with Cut, Copy, Paste and Select all" ((J "tc1").select_bar) "bar=$((J 'tc1').select_bar)"
+        Check "Select all selects the whole text" (([math]::Abs((Doc (J "tc3")).sels[0][1] - (Doc (J "tc3")).sels[0][0])) -eq (Doc (J "tc3")).chars) "$((Doc (J 'tc3')).sels[0] -join '-') of $((Doc (J 'tc3')).chars)"
+    } else { Check "the touch run produced its dumps" $false "missing" }
+}
+
 # ------------------------------------------------------------------- zoom
 # Every Read view zooms: by pinch or Ctrl and the wheel (the `zoom` verb), and by the keyboard.
 if (Want "zoom") {

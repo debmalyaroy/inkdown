@@ -104,6 +104,14 @@ pub struct InkApp {
     ime_keep: Option<(egui::output::IMEOutput, u8)>,
     pub first_frame_ms: Option<f32>,
     pub quit: bool,
+    /// Until when the phone's selection bar stays up without a selection (after a long
+    /// press on an empty place: Paste and Select all are still wanted).
+    pub select_bar_until: f64,
+    /// The press that a long press was already acted on for, and where the text is edited.
+    long_press: Option<f64>,
+    pub edit_rect: egui::Rect,
+    /// Long presses acted on (for tests).
+    pub long_presses: u32,
     /// Back presses seen, and how many of them left the app (for tests).
     pub backs: u32,
     pub left_app: u32,
@@ -124,6 +132,10 @@ pub struct InkApp {
     pub atlas_resets: u32,
     /// Document waiting for the answer of the phone's "save as" picker.
     pending_save: Option<u64>,
+    /// An exported file waiting for the same picker: its name and what goes into it.
+    pending_export: Option<(String, Vec<u8>)>,
+    /// Files handed to the system so far, as `share NAME BYTES KIND` or `save …` (for tests).
+    pub handed: Vec<String>,
     /// Files handed over by later launches (see instance.rs).
     pub incoming: Option<std::sync::mpsc::Receiver<Vec<PathBuf>>>,
     /// When unsaved work was last written to disk, and what the session file holds.
@@ -208,6 +220,8 @@ impl InkApp {
             updater: Default::default(),
             inject: Vec::new(),
             pending_save: None,
+            pending_export: None,
+            handed: Vec::new(),
             had_overlay: false,
             persisted_at: 0.0,
             incoming: None,
@@ -223,6 +237,10 @@ impl InkApp {
             atlas_resets: 0,
             first_frame_ms: None,
             quit: false,
+            select_bar_until: 0.0,
+            long_press: None,
+            edit_rect: egui::Rect::NOTHING,
+            long_presses: 0,
             backs: 0,
             left_app: 0,
             visited: Vec::new(),
@@ -374,6 +392,18 @@ impl InkApp {
         ctx.request_repaint_after(std::time::Duration::from_millis(250));
         while let Some(path) = crate::mobile::take_opened() {
             self.open_path(&path);
+        }
+        // an exported file whose place the user is choosing
+        if self.pending_export.is_some() {
+            let Some(answer) = crate::mobile::take_saved() else { return };
+            let (_, bytes) = self.pending_export.take().unwrap();
+            if let Some(place) = answer {
+                match crate::mobile::write_to(&place, &bytes) {
+                    Ok(name) => self.toast(format!("Saved as {name}")),
+                    Err(e) => self.toast(e),
+                }
+            }
+            return;
         }
         let Some(id) = self.pending_save else { return };
         let Some(answer) = crate::mobile::take_saved() else { return };
@@ -575,6 +605,73 @@ impl InkApp {
         false
     }
 
+    /// Gives a finished file to the system of a phone: to another app through the share
+    /// sheet, or to the place the user picks in the system's "save to" screen.
+    pub fn hand_over(&mut self, name: &str, bytes: Vec<u8>, share: bool) {
+        let kind = if bytes.starts_with(b"%PDF-") { "pdf" } else if bytes.starts_with(b"PK") { "zip" } else { "text" };
+        self.handed.push(format!("{} {name} {} {kind}", if share { "share" } else { "save" }, bytes.len()));
+        if bytes.is_empty() {
+            self.toast("There is nothing in this document to send.");
+            return;
+        }
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        {
+            if share {
+                if let Err(e) = crate::mobile::share_file(name, &bytes) {
+                    self.toast(e);
+                }
+            } else if crate::mobile::pick_save(name) {
+                self.pending_export = Some((name.to_string(), bytes));
+            } else {
+                // no system picker on this device: the shared Downloads folder
+                match crate::mobile::save_to_downloads(name, &bytes) {
+                    Ok(place) => self.toast(format!("Saved to {place}")),
+                    Err(e) => self.toast(e),
+                }
+            }
+        }
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        {
+            let _ = &self.pending_export;
+            self.toast(if share { "Sharing with another app is available on phones." } else { "Saved." });
+        }
+    }
+
+    /// A long press on text being edited selects the word under the finger and brings up
+    /// Cut, Copy, Paste and Select all, as it does in every editor on a phone. The editors
+    /// already select a word on a double tap, so a long press is turned into one.
+    fn long_press_selects(&mut self, ctx: &egui::Context, now: f64) {
+        if !crate::phone::active(ctx) || self.sheet.is_some() || self.dialog.is_some() || self.picker.is_some() {
+            return;
+        }
+        let editing = self.docs.get(self.active).is_some_and(|d| matches!(d.mode, Mode::Write | Mode::Code));
+        if !editing {
+            return;
+        }
+        let (down, origin, started, at) = ctx.input(|i| (i.pointer.primary_down(), i.pointer.press_origin(), i.pointer.press_start_time(), i.pointer.interact_pos()));
+        let (Some(origin), Some(started), true) = (origin, started, down) else { return };
+        if !self.edit_rect.contains(origin) || self.long_press == Some(started) {
+            return;
+        }
+        // a finger that moved is scrolling
+        if at.is_some_and(|p| p.distance(origin) > 10.0) {
+            self.long_press = Some(started);
+            return;
+        }
+        if now - started < 0.45 {
+            ctx.request_repaint_after(std::time::Duration::from_millis(60));
+            return;
+        }
+        self.long_press = Some(started);
+        self.long_presses += 1;
+        self.select_bar_until = now + 6.0;
+        let button = |pressed: bool| egui::Event::PointerButton { pos: origin, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+        // let go and tap once more where the finger is: with the press that is being held,
+        // that makes the double tap
+        self.inject.extend([button(false), egui::Event::PointerMoved(origin), button(true), button(false)]);
+        ctx.request_repaint();
+    }
+
     pub fn close_tab(&mut self, ix: usize) {
         match self.docs.get(ix) {
             Some(d) if d.dirty() => {
@@ -737,7 +834,7 @@ fn is_navigation(name: &str) -> bool {
 
 /// Commands that do not change the text of the active document.
 fn usable_when_read_only(name: &str) -> bool {
-    const PREFIXES: &[&str] = &["notes_open", "notes_new", "mode", "close", "theme", "open", "new_", "save", "export_", "print", "layout_", "focus_group_", "move_to_group_", "goto_", "show_", "select_tab_", "tool_avro_", "tool_word_count", "reopen_", "set_syntax"];
+    const PREFIXES: &[&str] = &["share_", "notes_open", "notes_new", "mode", "close", "theme", "open", "new_", "save", "export_", "print", "layout_", "focus_group_", "move_to_group_", "goto_", "show_", "select_tab_", "tool_avro_", "tool_word_count", "reopen_", "set_syntax"];
     const NAMES: &[&str] = &[
         "check_for_updates", "update_download", "update_install", "help_docs", "help_release_notes", "help_report_issue", "command_palette", "show_shortcuts", "select_theme",
         "cycle_mode", "next_tab", "prev_tab", "next_view", "prev_view", "welcome", "about", "quit", "integrations", "copy_path", "reveal_in_explorer", "revert",
@@ -1150,7 +1247,7 @@ impl InkApp {
                 }
             }
             n if n.starts_with("notes_") => crate::notes::command(self, n, arg),
-            n if n.starts_with("export_") || n == "print" => crate::export_ui::command(self, ctx, n),
+            n if n.starts_with("export_") || n.starts_with("share_") || n == "print" => crate::export_ui::command(self, ctx, n),
             n if n.starts_with("tool_") => crate::tools::command(self, ctx, n),
             n if n.starts_with("layout_") || n.starts_with("focus_group_") || n.starts_with("move_to_group_") || n == "new_window" => {
                 if n == "new_window" {
@@ -1290,6 +1387,7 @@ impl InkApp {
         }
         // large files being read, files that are followed, documents from a web address
         self.now = now;
+        self.long_press_selects(ctx, now);
         // remember which documents were looked at, in order, for Back
         let showing = self.docs.get(self.active).map(|d| d.id);
         if showing != self.shown_doc {
@@ -1340,6 +1438,7 @@ impl InkApp {
             match done {
                 crate::export_ui::Done::Toast(t) => self.toast(t),
                 crate::export_ui::Done::Saved(path, msg) => crate::export_ui::exported(self, &path, &msg),
+                crate::export_ui::Done::Share(name, bytes) => self.hand_over(&name, bytes, true),
                 crate::export_ui::Done::Open(url, msg) => {
                     self.toast(msg);
                     if !url.is_empty() {
@@ -1521,13 +1620,16 @@ impl InkApp {
             });
         }
         let mut action = None;
+        let mut edit_rect = egui::Rect::NOTHING;
         egui::CentralPanel::default().frame(egui::Frame::new().fill(pal.bg)).show(ui, |ui| {
+            edit_rect = ui.max_rect();
             let out = editor::show(ui, &mut d.ed, &mut d.buf, &mut d.hl, &d.cfg, &st, &snippets);
             if out.changed {
                 d.edited_at = Some(now);
             }
             action = out.action;
         });
+        self.edit_rect = edit_rect;
         if let Some(a) = action {
             let ctx = ui.ctx().clone();
             self.run(&ctx, a);
@@ -1787,6 +1889,7 @@ impl InkApp {
                     if kind == Kind::Svg {
                         crate::designer::show(ui, self);
                     } else {
+                        self.edit_rect = ui.max_rect();
                         crate::rich::show(ui, self);
                     }
                 });
