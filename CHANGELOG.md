@@ -2,6 +2,13 @@
 
 Each release has full notes in `docs/releases/`.
 
+## [1.3.3] - 2026-11-16
+
+See [docs/releases/v1.3.3.md](docs/releases/v1.3.3.md).
+
+- Android: Back closes what is open, then leaves editing, then returns to the document
+  before, then leaves the app. It used to do nothing unless something was open.
+
 ## [1.3.2] - 2026-11-15
 
 See [docs/releases/v1.3.2.md](docs/releases/v1.3.2.md).
@@ -94,6 +101,7 @@ First public release. See [docs/releases/v1.0.0.md](docs/releases/v1.0.0.md).
 - Export to HTML, Word, RTF and PDF.
 - Windows installer and portable exe; Android APK; macOS and Linux preview builds.
 
+[1.3.3]: https://github.com/debmalyaroy/inkdown/releases/tag/v1.3.3
 [1.3.2]: https://github.com/debmalyaroy/inkdown/releases/tag/v1.3.2
 [1.3.0]: https://github.com/debmalyaroy/inkdown/releases/tag/v1.3.0
 [1.2.0]: https://github.com/debmalyaroy/inkdown/releases/tag/v1.2.0

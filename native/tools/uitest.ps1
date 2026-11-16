@@ -740,6 +740,74 @@ quit
     }
 }
 
+# ------------------------------------------------------------------- back
+# The Back button or gesture of a phone, in the phone layout.
+if (Want "back") {
+    Write-Host "back"
+    $env:INKDOWN_PHONE = "1"
+    $s = @"
+wait 20
+open $w/doc.md
+wait 10
+cmd mode write
+wait 10
+click 385 27
+wait 8
+dump $o/bk1.json
+back
+wait 6
+dump $o/bk2.json
+cmd show_find
+wait 6
+dump $o/bk3.json
+back
+wait 6
+dump $o/bk4.json
+back
+wait 6
+dump $o/bk5.json
+back
+wait 6
+dump $o/bk6.json
+cmd notes_file
+wait 6
+back
+wait 6
+dump $o/bk7.json
+open $w/list.txt
+wait 8
+open $w/a.rs
+wait 8
+dump $o/bk8.json
+back
+wait 6
+dump $o/bk9.json
+back
+wait 6
+dump $o/bk10.json
+back
+wait 6
+dump $o/bk11.json
+quit
+"@
+    Remove-Item -Recurse -Force "$o/profile" -ErrorAction SilentlyContinue
+    Set-Content "$o/back.txt" $s
+    $env:INKDOWN_DATA_DIR = "$o/profile"; $env:INKDOWN_AUTOMATION = "$o/back.txt"; $env:INKDOWN_WINDOW = "412x880"; $env:INKDOWN_DIALOG_DIR = "$o/export"
+    $p = Start-Process -FilePath $exe -PassThru
+    if (-not $p.WaitForExit(120000)) { $p.Kill() }
+    Remove-Item Env:INKDOWN_PHONE
+    $env:INKDOWN_WINDOW = "1280x840"
+    if (Test-Path "$o/bk7.json") {
+        Check "Back closes an open sheet" ((J "bk1").sheet -eq "Menu" -and -not (J "bk2").sheet -and (J "bk2").left_app -eq 0) "$((J 'bk1').sheet) -> $((J 'bk2').sheet)"
+        Check "Back closes the search bar" ((Doc (J "bk3")).find_open -and -not (Doc (J "bk4")).find_open -and (J "bk4").left_app -eq 0)
+        Check "Back goes from editing to reading" ((Doc (J "bk4")).mode -ne "read" -and (Doc (J "bk5")).mode -eq "read" -and (J "bk5").left_app -eq 0) "$((Doc (J 'bk4')).mode) -> $((Doc (J 'bk5')).mode)"
+        Check "Back with nothing left to go back from leaves the app, once" ((J "bk6").left_app -eq 1 -and (J "bk6").docs.Count -eq (J "bk5").docs.Count) "left=$((J 'bk6').left_app)"
+        Check "Back closes a picker without leaving the app" (-not (J "bk7").picker -and (J "bk7").left_app -eq 1) "left=$((J 'bk7').left_app)"
+        Check "Back returns to the document that was open before, one at a time" ((Doc (J "bk8")).name -eq "a.rs" -and (Doc (J "bk9")).name -eq "list.txt" -and (Doc (J "bk10")).name -eq "doc.md" -and (J "bk10").left_app -eq 1) "$((Doc (J 'bk8')).name) -> $((Doc (J 'bk9')).name) -> $((Doc (J 'bk10')).name)"
+        Check "and after the first document it leaves the app; no document is closed by Back" ((J "bk11").left_app -eq 2 -and (J "bk11").docs.Count -eq (J "bk8").docs.Count) "left=$((J 'bk11').left_app) docs=$((J 'bk11').docs.Count)"
+    } else { Check "the Back run produced its dumps" $false "missing" }
+}
+
 # ------------------------------------------------------------------- zoom
 # Every Read view zooms: by pinch or Ctrl and the wheel (the `zoom` verb), and by the keyboard.
 if (Want "zoom") {

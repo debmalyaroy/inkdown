@@ -3,7 +3,7 @@
 //!
 //! Script lines: `wait N`, `open PATH`, `cmd NAME [ARG]`, `type TEXT`, `key COMBO`,
 //! `click X Y`, `dclick X Y`, `rclick X Y`, `drag X1 Y1 X2 Y2`, `move X Y`, `scroll DX DY`,
-//! `zoom FACTOR`, `shot FILE.png`, `dump FILE.json`, `close_window`, `quit`. `\n` and `\t` in TEXT are expanded.
+//! `zoom FACTOR`, `back`, `shot FILE.png`, `dump FILE.json`, `close_window`, `quit`. `\n` and `\t` in TEXT are expanded.
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -134,6 +134,12 @@ impl Automation {
                 self.queue.push(Event::PointerMoved(self.pointer));
             }
             "drag" if nums.len() >= 4 => self.drag = Some((pos2(nums[0], nums[1]), pos2(nums[2], nums[3]), 0)),
+            // the Back button or gesture of a phone
+            "back" => {
+                for pressed in [true, false] {
+                    self.queue.push(Event::Key { key: egui::Key::BrowserBack, physical_key: None, pressed, repeat: false, modifiers: Modifiers::NONE });
+                }
+            }
             // a pinch, or Ctrl with the wheel: the factor by which to zoom
             "zoom" if !nums.is_empty() => {
                 self.queue.push(Event::Zoom(nums[0]));
@@ -238,6 +244,8 @@ pub fn dump(app: &InkApp, ctx: &egui::Context) -> serde_json::Value {
         "bottom": format!("{:?}", app.bottom),
         "split": app.split.is_some(),
         "sheet": app.sheet.map(|s| format!("{s:?}")),
+        "backs": app.backs,
+        "left_app": app.left_app,
         "minimap": app.set.minimap,
         "word_wrap": app.set.word_wrap,
         "font_size": app.set.font_size,

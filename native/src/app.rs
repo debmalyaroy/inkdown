@@ -104,6 +104,13 @@ pub struct InkApp {
     ime_keep: Option<(egui::output::IMEOutput, u8)>,
     pub first_frame_ms: Option<f32>,
     pub quit: bool,
+    /// Back presses seen, and how many of them left the app (for tests).
+    pub backs: u32,
+    pub left_app: u32,
+    /// Documents that were on screen before the present one, oldest first: where Back
+    /// returns to, like the screens of any other app.
+    visited: Vec<u64>,
+    shown_doc: Option<u64>,
     /// The user chose to close although unsaved work will be lost.
     pub quit_anyway: bool,
     pub updater: crate::update::Updater,
@@ -216,6 +223,10 @@ impl InkApp {
             atlas_resets: 0,
             first_frame_ms: None,
             quit: false,
+            backs: 0,
+            left_app: 0,
+            visited: Vec::new(),
+            shown_doc: None,
             quit_anyway: false,
             atlas: (0.0, None, 0.0),
         };
@@ -511,6 +522,57 @@ impl InkApp {
     /// large for one, or the draft could not be written).
     pub fn unprotected(&self) -> Vec<usize> {
         self.docs.iter().enumerate().filter(|(_, d)| !d.scratch && !d.read_only && d.buf.len() > 0 && (d.dirty() || d.path.is_none()) && (!self.set.hot_exit || d.draft_version != Some(d.buf.version))).map(|(i, _)| i).collect()
+    }
+
+    /// The Back button or gesture of a phone goes one step back, the way it does in every
+    /// Android app: it closes what is open on top (a sheet, a dialog, the drawer, a search);
+    /// then it leaves editing for reading; and when there is nothing left to go back from,
+    /// it leaves Inkdown, which stays open in the background.
+    ///
+    /// Returns true when the step is "close what is open", which Escape already does.
+    pub fn back(&mut self, ctx: &egui::Context) -> bool {
+        self.backs += 1;
+        ctx.request_repaint();
+        if self.sheet.take().is_some() {
+            return false;
+        }
+        let phone = crate::phone::active(ctx);
+        let drawer = phone && self.set.show_sidebar;
+        if drawer {
+            self.set.show_sidebar = false;
+            return false;
+        }
+        let searching = self.docs.get(self.active).is_some_and(|d| d.ed.find.open || d.view.pdf.find_open);
+        if self.dialog.is_some() || self.picker.is_some() || self.lightbox.is_some() || searching {
+            if let Some(d) = self.docs.get_mut(self.active) {
+                d.ed.find.open = false;
+                d.view.pdf.find_open = false;
+            }
+            return true;
+        }
+        // from writing back to reading, for documents that have a reader
+        if let Some(d) = self.docs.get_mut(self.active) {
+            if d.mode != Mode::Read && d.kind.modes().contains(&Mode::Read) && d.buf.len() > 0 {
+                d.mode = Mode::Read;
+                return false;
+            }
+        }
+        // back to the document that was on screen before this one
+        while let Some(id) = self.visited.pop() {
+            if let Some(ix) = self.docs.iter().position(|d| d.id == id) {
+                if ix != self.active {
+                    self.active = ix;
+                    // coming back is not a visit of its own
+                    self.shown_doc = Some(id);
+                    return false;
+                }
+            }
+        }
+        // nothing left to go back from: leave the app, as the Home button would
+        self.left_app += 1;
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        crate::mobile::leave_app();
+        false
     }
 
     pub fn close_tab(&mut self, ix: usize) {
@@ -1228,6 +1290,18 @@ impl InkApp {
         }
         // large files being read, files that are followed, documents from a web address
         self.now = now;
+        // remember which documents were looked at, in order, for Back
+        let showing = self.docs.get(self.active).map(|d| d.id);
+        if showing != self.shown_doc {
+            if let Some(before) = self.shown_doc.filter(|id| self.docs.iter().any(|d| d.id == *id)) {
+                self.visited.retain(|id| *id != before);
+                self.visited.push(before);
+                if self.visited.len() > 32 {
+                    self.visited.remove(0);
+                }
+            }
+            self.shown_doc = showing;
+        }
         crate::live::tick(self, ctx, now);
         // files changed by other programs
         if now - self.last_disk_check > 1.5 && ctx.input(|i| i.focused) {
@@ -1732,16 +1806,19 @@ fn strip_unc(p: PathBuf) -> PathBuf {
 impl eframe::App for InkApp {
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
         raw.events.append(&mut self.inject);
-        // The Back button or gesture of a phone closes whatever is open, like Esc on a keyboard.
-        for ev in &mut raw.events {
-            if let egui::Event::Key { key, .. } = ev {
-                if *key == egui::Key::BrowserBack {
-                    *key = egui::Key::Escape;
-                }
-            }
-        }
         if let Some(a) = &mut self.automation {
             a.inject(ctx, raw);
+        }
+        // The Back button or gesture of a phone: see `back`.
+        let pressed = raw.events.iter().any(|e| matches!(e, egui::Event::Key { key: egui::Key::BrowserBack, pressed: true, .. }));
+        if pressed {
+            let as_escape = self.back(ctx);
+            raw.events.retain(|e| !matches!(e, egui::Event::Key { key: egui::Key::BrowserBack, .. }));
+            if as_escape {
+                for pressed in [true, false] {
+                    raw.events.push(egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed, repeat: false, modifiers: egui::Modifiers::NONE });
+                }
+            }
         }
     }
 

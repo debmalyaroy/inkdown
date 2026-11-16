@@ -88,6 +88,19 @@ public class MainActivity extends NativeActivity {
         }
     }
 
+    /**
+     * Back, when there is nothing left to go back from inside the app: put the app in the
+     * background, like the Home button. The documents stay open.
+     */
+    public void leaveApp() {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                moveTaskToBack(true);
+            }
+        });
+    }
+
     /** Shows the system file picker. The choice arrives through takeOpened(). */
     public void pickFile() {
         runOnUiThread(new Runnable() {

@@ -289,6 +289,15 @@ pub fn http_open(url: &str, from: u64, etag: &str, modified: &str) -> Option<(St
     Some((head, HttpStream(id)))
 }
 
+/// Sends the app to the background, as the Home button does. It keeps running, with its
+/// documents open.
+pub fn leave_app() {
+    #[cfg(target_os = "android")]
+    {
+        android::call_void("leaveApp");
+    }
+}
+
 /// Write a line to the Android log (`adb logcat -s Inkdown`).
 pub fn log(msg: &str) {
     #[cfg(target_os = "android")]
